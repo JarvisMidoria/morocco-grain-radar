@@ -7,8 +7,6 @@ import { LiveRadarMapProps } from "@/components/map/live-radar-map";
 import { formatEta, formatRelativeTime } from "@/lib/formatters";
 import { DetectionPhase, RadarVessel } from "@/lib/types";
 
-const REFRESH_INTERVAL_MS = 40_000;
-
 const phaseColor: Record<DetectionPhase, string> = {
   departure_detected: "#64748b",
   morocco_bound_suspected: "#0ea5e9",
@@ -53,8 +51,14 @@ function phaseLabel(phase: DetectionPhase) {
   return phase.replaceAll("_", " ");
 }
 
-export default function LiveRadarMapClient({ initialVessels, moroccoPorts, filters }: LiveRadarMapProps) {
+export default function LiveRadarMapClient({
+  initialVessels,
+  moroccoPorts,
+  filters,
+  refreshIntervalSeconds = 40,
+}: LiveRadarMapProps) {
   const [vessels, setVessels] = useState<RadarVessel[]>(initialVessels);
+  const refreshIntervalMs = Math.max(15, refreshIntervalSeconds) * 1000;
 
   const query = useMemo(() => buildQuery(filters), [filters]);
 
@@ -77,13 +81,13 @@ export default function LiveRadarMapClient({ initialVessels, moroccoPorts, filte
     };
 
     fetchLatest();
-    const timer = window.setInterval(fetchLatest, REFRESH_INTERVAL_MS);
+    const timer = window.setInterval(fetchLatest, refreshIntervalMs);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [query]);
+  }, [query, refreshIntervalMs]);
 
   return (
     <div className="h-[560px] w-full overflow-hidden rounded-xl border border-slate-200">

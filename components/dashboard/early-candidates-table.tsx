@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CommodityConfidenceBadge } from "@/components/dashboard/commodity-confidence-badge";
 import { DetectionPhaseBadge } from "@/components/dashboard/detection-phase-badge";
+import { FavoriteToggle } from "@/components/dashboard/favorite-toggle";
 import { ScoreBadge } from "@/components/dashboard/score-badge";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -43,8 +44,13 @@ export function EarlyCandidatesTable({ vessels }: EarlyCandidatesTableProps) {
         {vessels.map((vessel) => (
           <TableRow key={vessel.id}>
             <TableCell className="font-medium text-slate-900">
-              <div>{vessel.name}</div>
-              <div className="text-xs text-slate-500">IMO {vessel.imo || "N/A"}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div>{vessel.name}</div>
+                  <div className="text-xs text-slate-500">IMO {vessel.imo || "N/A"}</div>
+                </div>
+                <FavoriteToggle vesselId={vessel.id} initialFavorite={vessel.isFavorite} />
+              </div>
               <div className="mt-2 space-y-1.5 md:hidden">
                 <div className="flex flex-wrap gap-1.5">
                   <DetectionPhaseBadge phase={vessel.detectionPhase} />

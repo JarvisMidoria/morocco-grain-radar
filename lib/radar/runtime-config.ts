@@ -1,4 +1,5 @@
 import "@/lib/env";
+import { getProviderApiKey, getRuntimeSelectionFromSettings } from "@/lib/settings/store";
 
 export type RadarDataMode = "mock" | "live";
 
@@ -9,6 +10,11 @@ export interface RadarRuntimeConfig {
   provider: RadarProvider;
   liveProviderImplemented: boolean;
   validationError: string | null;
+}
+
+interface RuntimeOverrides {
+  forceMode?: RadarDataMode;
+  forceProvider?: RadarProvider;
 }
 
 function normalizeMode(value?: string | null): RadarDataMode {
@@ -33,9 +39,21 @@ function normalizeProvider(value?: string | null): RadarProvider {
   return "mock";
 }
 
-export function getRadarRuntimeConfig(): RadarRuntimeConfig {
-  const mode = normalizeMode(process.env.RADAR_DATA_MODE);
-  const provider = mode === "mock" ? "mock" : normalizeProvider(process.env.AIS_PROVIDER);
+export function getRadarRuntimeConfig(overrides: RuntimeOverrides = {}): RadarRuntimeConfig {
+  const selection = getRuntimeSelectionFromSettings();
+  const mode = overrides.forceMode ?? normalizeMode(selection.mode);
+  const selectedProvider =
+    overrides.forceProvider ??
+    normalizeProvider(selection.provider) ??
+    normalizeProvider(process.env.AIS_PROVIDER);
+  const provider =
+    mode === "mock"
+      ? "mock"
+      : selectedProvider === "mock"
+        ? normalizeProvider(process.env.AIS_PROVIDER) === "mock"
+          ? "hybrid"
+          : normalizeProvider(process.env.AIS_PROVIDER)
+        : selectedProvider;
 
   if (mode === "mock") {
     return {
@@ -57,23 +75,23 @@ export function getRadarRuntimeConfig(): RadarRuntimeConfig {
   }
 
   if (provider === "hybrid") {
-    if (!process.env.AISSTREAM_API_KEY) {
+    if (!getProviderApiKey("aisstream")) {
       return {
         mode,
         provider,
         liveProviderImplemented: true,
         validationError:
-          "Live mode with AIS_PROVIDER=hybrid requires AISSTREAM_API_KEY. Set it in .env.local or switch to RADAR_DATA_MODE=mock.",
+          "Live mode with AIS_PROVIDER=hybrid requires AISSTREAM_API_KEY. Set it in settings or switch to RADAR_DATA_MODE=mock.",
       };
     }
 
-    if (!process.env.DATALASTIC_API_KEY) {
+    if (!getProviderApiKey("datalastic")) {
       return {
         mode,
         provider,
         liveProviderImplemented: true,
         validationError:
-          "Live mode with AIS_PROVIDER=hybrid requires DATALASTIC_API_KEY. Set it in .env.local or switch to RADAR_DATA_MODE=mock.",
+          "Live mode with AIS_PROVIDER=hybrid requires DATALASTIC_API_KEY. Set it in settings or switch to RADAR_DATA_MODE=mock.",
       };
     }
 
@@ -86,13 +104,13 @@ export function getRadarRuntimeConfig(): RadarRuntimeConfig {
   }
 
   if (provider === "vesselfinder") {
-    if (!process.env.VESSELFINDER_API_KEY) {
+    if (!getProviderApiKey("vesselfinder")) {
       return {
         mode,
         provider,
         liveProviderImplemented: true,
         validationError:
-          "Live mode requires VESSELFINDER_API_KEY. Set it in .env or switch to RADAR_DATA_MODE=mock.",
+          "Live mode requires VESSELFINDER_API_KEY. Set it in settings or switch to RADAR_DATA_MODE=mock.",
       };
     }
 

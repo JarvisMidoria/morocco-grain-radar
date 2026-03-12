@@ -6,11 +6,12 @@ import {
   HybridRollingMemoryMetrics,
   HybridWatchlistMetrics,
 } from "@/lib/ais/hybrid-provider";
-import { getAISProvider, getMockAISProvider } from "@/lib/ais/factory";
+import { getAISProvider, getAISProviderForSelection, getMockAISProvider } from "@/lib/ais/factory";
 import { MOROCCO_PORT_KEYWORDS } from "@/lib/data/mock-dataset";
 import { persistLiveRadarSnapshot } from "@/lib/radar/live-persistence";
 import { getRadarRuntimeConfig, getRuntimeSourceLabel } from "@/lib/radar/runtime-config";
 import { IntelligenceScoringResult, scoreVesselIntelligence } from "@/lib/scoring/grain-scoring";
+import { getFavoriteVesselIds } from "@/lib/settings/store";
 import {
   AnalyticsPayload,
   CommodityConfidenceLabel,
@@ -244,6 +245,7 @@ export interface LiveVesselValidationEntry {
   topVoyageHypothesis: string;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: "weak" | "moderate" | "strong";
+  topVoyageHypothesisProbability: number;
   voyageHypothesisEvidenceStyle: "explicit_morocco_support" | "candidate_pre_confirmation";
   voyageHypothesisReasons: string[];
   alternativeVoyageHypotheses: Array<{
@@ -330,6 +332,139 @@ export interface LiveVesselValidationEntry {
   promotionReason: string | null;
   dropReason: string | null;
   commodityHypothesisReasons: string[];
+  vesselHistoricalProfile: {
+    exportPortVisitCounts: Record<string, number>;
+    moroccoPortVisitCounts: Record<string, number>;
+    corridorCounts: Record<string, number>;
+    voyageTemplateCounts: Record<string, number>;
+    historicalCommodityDistribution: Record<CommodityType, number>;
+    vesselRouteRepetitionScore: number;
+  };
+  vesselVoyageState:
+    | "ballast_arrival"
+    | "port_waiting"
+    | "loading_in_progress"
+    | "laden_departure"
+    | "voyage_confirmed";
+  voyageStateConfidence: "low" | "medium" | "high";
+  voyageStateReasons: string[];
+  historicalDestinationSeries: string[];
+  destinationEvolutionScore: number;
+  destinationMoroccoConfidence: number;
+  destinationContradictionScore: number;
+  destinationConsistencyScore: number;
+  destinationEvolutionReasons: string[];
+  portCommodityPriorScores: {
+    wheatScore: number;
+    barleyScore: number;
+    cornScore: number;
+    soybeanMealScore: number;
+  };
+  portCommodityPriorReasons: string[];
+  contradictionScore: number;
+  contradictionReasons: string[];
+  ensembleEvidenceBreakdown: {
+    routeEvidence: number;
+    loadingEvidence: number;
+    portKnowledgeEvidence: number;
+    historicalEvidence: number;
+    destinationEvidence: number;
+    flowPriorEvidence: number;
+    contradictionEvidence: number;
+    overallSupportScore: number;
+  };
+  dataCompletenessScore: number;
+  confidencePenalty: number;
+  predictionConfidenceBand: "weak" | "moderate" | "strong";
+  missingCriticalPredictionSignals: string[];
+  commodityPriorProbabilities: {
+    wheat: number;
+    barley: number;
+    corn: number;
+    soybeanMeal: number;
+  };
+  commodityPosteriorProbabilities: {
+    wheat: number;
+    barley: number;
+    corn: number;
+    soybeanMeal: number;
+  };
+  commodityEvidenceAdjustments: {
+    routeEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    loadingEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    historicalEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    destinationEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    flowPriorEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    contradictionEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    voyageHypothesisEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    seasonalEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+    commercialPatternEvidence: {
+      wheatScore: number;
+      barleyScore: number;
+      cornScore: number;
+      soybeanMealScore: number;
+    };
+  };
+  predictionEntropy: number;
+  evidenceCoverageScore: number;
+  uncertaintyPenalty: number;
+  voyageTemplatePosteriorProbabilities: Record<string, number>;
+  voyageTemplateEntropy: number;
+  informationValueSignals: Array<{
+    signal: string;
+    value: number;
+    reason: string;
+    currentlyMissing: boolean;
+  }>;
+  missingInformationValueRanking: Array<{
+    signal: string;
+    value: number;
+    reason: string;
+    currentlyMissing: boolean;
+  }>;
+  seasonalAdjustmentScore: number;
+  seasonalReasoning: string[];
+  commercialPatternSimilarityScore: number;
   evidenceMissingCount: number;
   weakEvidenceOnly: boolean;
 }
@@ -761,6 +896,32 @@ function applyFilters(vessels: RadarVessel[], filters: VesselFilters = {}) {
 
     return haystack.includes(search);
   });
+}
+
+function annotateFavorites(vessels: RadarVessel[]) {
+  const favoriteIds = getFavoriteVesselIds();
+  return vessels.map((vessel) => ({
+    ...vessel,
+    isFavorite: favoriteIds.has(vessel.id),
+  }));
+}
+
+function prioritizeFavorites(vessels: RadarVessel[]) {
+  return vessels
+    .map((vessel, index) => ({ vessel, index }))
+    .sort((a, b) => {
+      if (Boolean(b.vessel.isFavorite) !== Boolean(a.vessel.isFavorite)) {
+        return Number(Boolean(b.vessel.isFavorite)) - Number(Boolean(a.vessel.isFavorite));
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.vessel);
+}
+
+function applyFavoritesAndFilters(vessels: RadarVessel[], filters: VesselFilters = {}) {
+  const withFavorites = annotateFavorites(vessels);
+  const filtered = applyFilters(withFavorites, filters);
+  return prioritizeFavorites(filtered);
 }
 
 function hasValue(value: string | null | undefined) {
@@ -1386,6 +1547,8 @@ function buildValidationEntryFromDebug(
       vessel?.topVoyageHypothesisScore ?? debug.topVoyageHypothesisScore ?? 0,
     topVoyageHypothesisConfidence:
       vessel?.topVoyageHypothesisConfidence ?? debug.topVoyageHypothesisConfidence ?? "weak",
+    topVoyageHypothesisProbability:
+      vessel?.topVoyageHypothesisProbability ?? debug.topVoyageHypothesisProbability ?? 0,
     voyageHypothesisEvidenceStyle:
       vessel?.voyageHypothesisEvidenceStyle ??
       debug.voyageHypothesisEvidenceStyle ??
@@ -1498,6 +1661,138 @@ function buildValidationEntryFromDebug(
     promotionReason: debug.promotionReason ?? null,
     dropReason: debug.dropReason ?? null,
     commodityHypothesisReasons: vessel?.commodityReasons ?? [],
+    vesselHistoricalProfile:
+      vessel?.vesselHistoricalProfile ??
+      debug.vesselHistoricalProfile ?? {
+        exportPortVisitCounts: {},
+        moroccoPortVisitCounts: {},
+        corridorCounts: {},
+        voyageTemplateCounts: {},
+        historicalCommodityDistribution: {
+          wheat: 0,
+          barley: 0,
+          corn: 0,
+          soybeanMeal: 0,
+        },
+        vesselRouteRepetitionScore: 0,
+      },
+    vesselVoyageState:
+      vessel?.vesselVoyageState ??
+      debug.vesselVoyageState ??
+      "ballast_arrival",
+    voyageStateConfidence:
+      vessel?.voyageStateConfidence ??
+      debug.voyageStateConfidence ??
+      "low",
+    voyageStateReasons:
+      vessel?.voyageStateReasons ??
+      debug.voyageStateReasons ??
+      [],
+    historicalDestinationSeries: debug.historicalDestinationSeries ?? [],
+    destinationEvolutionScore:
+      vessel?.destinationEvolutionScore ??
+      debug.destinationEvolutionScore ??
+      0,
+    destinationMoroccoConfidence:
+      vessel?.destinationMoroccoConfidence ??
+      debug.destinationMoroccoConfidence ??
+      0,
+    destinationContradictionScore:
+      vessel?.destinationContradictionScore ??
+      debug.destinationContradictionScore ??
+      0,
+    destinationConsistencyScore:
+      vessel?.destinationConsistencyScore ??
+      debug.destinationConsistencyScore ??
+      0,
+    destinationEvolutionReasons:
+      vessel?.destinationEvolutionReasons ??
+      debug.destinationEvolutionReasons ??
+      [],
+    portCommodityPriorScores:
+      vessel?.portCommodityPriorScores ??
+      debug.portCommodityPriorScores ?? {
+        wheatScore: 0,
+        barleyScore: 0,
+        cornScore: 0,
+        soybeanMealScore: 0,
+      },
+    portCommodityPriorReasons:
+      vessel?.portCommodityPriorReasons ??
+      debug.portCommodityPriorReasons ??
+      [],
+    contradictionScore:
+      vessel?.contradictionScore ??
+      debug.contradictionScore ??
+      0,
+    contradictionReasons:
+      vessel?.contradictionReasons ??
+      debug.contradictionReasons ??
+      [],
+    ensembleEvidenceBreakdown:
+      vessel?.ensembleEvidenceBreakdown ??
+      debug.ensembleEvidenceBreakdown ?? {
+        routeEvidence: 0,
+        loadingEvidence: 0,
+        portKnowledgeEvidence: 0,
+        historicalEvidence: 0,
+        destinationEvidence: 0,
+        flowPriorEvidence: 0,
+        contradictionEvidence: 0,
+        overallSupportScore: 0,
+      },
+    dataCompletenessScore:
+      vessel?.dataCompletenessScore ??
+      debug.dataCompletenessScore ??
+      0,
+    confidencePenalty:
+      vessel?.confidencePenalty ??
+      debug.confidencePenalty ??
+      0,
+    predictionConfidenceBand:
+      vessel?.predictionConfidenceBand ??
+      debug.predictionConfidenceBand ??
+      "weak",
+    missingCriticalPredictionSignals:
+      vessel?.missingCriticalPredictionSignals ??
+      debug.missingCriticalPredictionSignals ??
+      [],
+    commodityPriorProbabilities: vessel?.commodityPriorProbabilities ?? {
+      wheat: 0.25,
+      barley: 0.25,
+      corn: 0.25,
+      soybeanMeal: 0.25,
+    },
+    commodityPosteriorProbabilities: vessel?.commodityPosteriorProbabilities ?? {
+      wheat: 0.25,
+      barley: 0.25,
+      corn: 0.25,
+      soybeanMeal: 0.25,
+    },
+    commodityEvidenceAdjustments: vessel?.commodityEvidenceAdjustments ?? {
+      routeEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      loadingEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      historicalEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      destinationEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      flowPriorEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      contradictionEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      voyageHypothesisEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      seasonalEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      commercialPatternEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+    },
+    predictionEntropy: vessel?.predictionEntropy ?? 100,
+    evidenceCoverageScore: vessel?.evidenceCoverageScore ?? 0,
+    uncertaintyPenalty: vessel?.uncertaintyPenalty ?? 20,
+    voyageTemplatePosteriorProbabilities:
+      vessel?.voyageTemplatePosteriorProbabilities ??
+      debug.voyageTemplatePosteriorProbabilities ??
+      {},
+    voyageTemplateEntropy: vessel?.voyageTemplateEntropy ?? debug.voyageTemplateEntropy ?? 100,
+    informationValueSignals: vessel?.informationValueSignals ?? [],
+    missingInformationValueRanking: vessel?.missingInformationValueRanking ?? [],
+    seasonalAdjustmentScore: vessel?.seasonalAdjustmentScore ?? 0,
+    seasonalReasoning: vessel?.seasonalReasoning ?? [],
+    commercialPatternSimilarityScore: vessel?.commercialPatternSimilarityScore ?? 0,
     evidenceMissingCount: 0,
     weakEvidenceOnly: debug.weakEvidenceOnly ?? (vessel ? fallbackWeakEvidence(vessel) : false),
   };
@@ -1588,6 +1883,7 @@ function buildFallbackValidationEntry(vessel: RadarVessel): LiveVesselValidation
     topVoyageHypothesis: vessel.topVoyageHypothesis,
     topVoyageHypothesisScore: vessel.topVoyageHypothesisScore,
     topVoyageHypothesisConfidence: vessel.topVoyageHypothesisConfidence,
+    topVoyageHypothesisProbability: vessel.topVoyageHypothesisProbability,
     voyageHypothesisEvidenceStyle: vessel.voyageHypothesisEvidenceStyle,
     voyageHypothesisReasons: vessel.voyageHypothesisReasons,
     alternativeVoyageHypotheses: vessel.alternativeVoyageHypotheses,
@@ -1669,6 +1965,84 @@ function buildFallbackValidationEntry(vessel: RadarVessel): LiveVesselValidation
     promotionReason: null,
     dropReason: null,
     commodityHypothesisReasons: vessel.commodityReasons,
+    vesselHistoricalProfile: vessel.vesselHistoricalProfile ?? {
+      exportPortVisitCounts: {},
+      moroccoPortVisitCounts: {},
+      corridorCounts: {},
+      voyageTemplateCounts: {},
+      historicalCommodityDistribution: {
+        wheat: 0,
+        barley: 0,
+        corn: 0,
+        soybeanMeal: 0,
+      },
+      vesselRouteRepetitionScore: 0,
+    },
+    vesselVoyageState: vessel.vesselVoyageState ?? "ballast_arrival",
+    voyageStateConfidence: vessel.voyageStateConfidence ?? "low",
+    voyageStateReasons: vessel.voyageStateReasons ?? [],
+    historicalDestinationSeries: [],
+    destinationEvolutionScore: vessel.destinationEvolutionScore ?? 0,
+    destinationMoroccoConfidence: vessel.destinationMoroccoConfidence ?? 0,
+    destinationContradictionScore: vessel.destinationContradictionScore ?? 0,
+    destinationConsistencyScore: vessel.destinationConsistencyScore ?? 0,
+    destinationEvolutionReasons: vessel.destinationEvolutionReasons ?? [],
+    portCommodityPriorScores: vessel.portCommodityPriorScores ?? {
+      wheatScore: 0,
+      barleyScore: 0,
+      cornScore: 0,
+      soybeanMealScore: 0,
+    },
+    portCommodityPriorReasons: vessel.portCommodityPriorReasons ?? [],
+    contradictionScore: vessel.contradictionScore ?? 0,
+    contradictionReasons: vessel.contradictionReasons ?? [],
+    ensembleEvidenceBreakdown: vessel.ensembleEvidenceBreakdown ?? {
+      routeEvidence: 0,
+      loadingEvidence: 0,
+      portKnowledgeEvidence: 0,
+      historicalEvidence: 0,
+      destinationEvidence: 0,
+      flowPriorEvidence: 0,
+      contradictionEvidence: 0,
+      overallSupportScore: 0,
+    },
+    dataCompletenessScore: vessel.dataCompletenessScore ?? 0,
+    confidencePenalty: vessel.confidencePenalty ?? 0,
+    predictionConfidenceBand: vessel.predictionConfidenceBand ?? "weak",
+    missingCriticalPredictionSignals: vessel.missingCriticalPredictionSignals ?? [],
+    commodityPriorProbabilities: vessel.commodityPriorProbabilities ?? {
+      wheat: 0.25,
+      barley: 0.25,
+      corn: 0.25,
+      soybeanMeal: 0.25,
+    },
+    commodityPosteriorProbabilities: vessel.commodityPosteriorProbabilities ?? {
+      wheat: 0.25,
+      barley: 0.25,
+      corn: 0.25,
+      soybeanMeal: 0.25,
+    },
+    commodityEvidenceAdjustments: vessel.commodityEvidenceAdjustments ?? {
+      routeEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      loadingEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      historicalEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      destinationEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      flowPriorEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      contradictionEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      voyageHypothesisEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      seasonalEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+      commercialPatternEvidence: { wheatScore: 0, barleyScore: 0, cornScore: 0, soybeanMealScore: 0 },
+    },
+    predictionEntropy: vessel.predictionEntropy ?? 100,
+    evidenceCoverageScore: vessel.evidenceCoverageScore ?? 0,
+    uncertaintyPenalty: vessel.uncertaintyPenalty ?? 20,
+    voyageTemplatePosteriorProbabilities: vessel.voyageTemplatePosteriorProbabilities ?? {},
+    voyageTemplateEntropy: vessel.voyageTemplateEntropy ?? 100,
+    informationValueSignals: vessel.informationValueSignals ?? [],
+    missingInformationValueRanking: vessel.missingInformationValueRanking ?? [],
+    seasonalAdjustmentScore: vessel.seasonalAdjustmentScore ?? 0,
+    seasonalReasoning: vessel.seasonalReasoning ?? [],
+    commercialPatternSimilarityScore: vessel.commercialPatternSimilarityScore ?? 0,
     evidenceMissingCount: 0,
     weakEvidenceOnly: fallbackWeakEvidence(vessel),
   };
@@ -1929,6 +2303,39 @@ async function hydrateVessels(
         arrivalTimestampConfidence: voyage.arrivalAt ? "high" : "low",
         terminalMatchConfidenceHint: undefined,
       },
+      historicalCommercialProfile: debugRecord?.vesselHistoricalProfile,
+      destinationHistory: debugRecord?.historicalDestinationSeries ?? undefined,
+      destinationEvolution:
+        debugRecord &&
+        typeof debugRecord.destinationEvolutionScore === "number" &&
+        typeof debugRecord.destinationMoroccoConfidence === "number" &&
+        typeof debugRecord.destinationContradictionScore === "number" &&
+        typeof debugRecord.destinationConsistencyScore === "number"
+          ? {
+              destinationEvolutionScore: debugRecord.destinationEvolutionScore,
+              destinationMoroccoConfidence: debugRecord.destinationMoroccoConfidence,
+              destinationContradictionScore: debugRecord.destinationContradictionScore,
+              destinationConsistencyScore: debugRecord.destinationConsistencyScore,
+              destinationEvolutionReasons: debugRecord.destinationEvolutionReasons ?? [],
+            }
+          : undefined,
+      portCommodityPriorScores: debugRecord?.portCommodityPriorScores,
+      contradictionSignal:
+        debugRecord &&
+        typeof debugRecord.contradictionScore === "number"
+          ? {
+              contradictionScore: debugRecord.contradictionScore,
+              contradictionReasons: debugRecord.contradictionReasons ?? [],
+            }
+          : undefined,
+      voyageState:
+        debugRecord && debugRecord.vesselVoyageState
+          ? {
+              vesselVoyageState: debugRecord.vesselVoyageState,
+              voyageStateConfidence: debugRecord.voyageStateConfidence ?? "low",
+              voyageStateReasons: debugRecord.voyageStateReasons ?? [],
+            }
+          : undefined,
     });
 
     if (mode === "live") {
@@ -2034,10 +2441,13 @@ async function hydrateVessels(
       topVoyageHypothesis: scoring.topVoyageHypothesis,
       topVoyageHypothesisScore: scoring.topVoyageHypothesisScore,
       topVoyageHypothesisConfidence: scoring.topVoyageHypothesisConfidence,
+      topVoyageHypothesisProbability: scoring.topVoyageHypothesisProbability,
       voyageHypothesisEvidenceStyle: scoring.voyageHypothesisEvidenceStyle,
       voyageHypothesisReasons: scoring.voyageHypothesisReasons,
       alternativeVoyageHypotheses: scoring.alternativeVoyageHypotheses,
       missingSignalsForVoyageConfirmation: scoring.missingSignalsForVoyageConfirmation,
+      voyageTemplatePosteriorProbabilities: scoring.voyageTemplatePosteriorProbabilities,
+      voyageTemplateEntropy: scoring.voyageTemplateEntropy,
       matchedCommodityKnowledgeNode: scoring.matchedCommodityKnowledgeNode,
       terminalCommodityProfile: scoring.terminalCommodityProfile,
       vesselClassKnowledgeProfile: scoring.vesselClassKnowledgeProfile,
@@ -2050,6 +2460,35 @@ async function hydrateVessels(
       knowledgeMatchedTerminalIntelligence: scoring.knowledgeMatchedTerminalIntelligence,
       knowledgeMatchedCommodityProfile: scoring.knowledgeMatchedCommodityProfile,
       knowledgeDestinationIntelligenceSupport: scoring.knowledgeDestinationIntelligenceSupport,
+      vesselHistoricalProfile: scoring.vesselHistoricalProfile,
+      vesselVoyageState: scoring.vesselVoyageState,
+      voyageStateConfidence: scoring.voyageStateConfidence,
+      voyageStateReasons: scoring.voyageStateReasons,
+      destinationEvolutionScore: scoring.destinationEvolutionScore,
+      destinationMoroccoConfidence: scoring.destinationMoroccoConfidence,
+      destinationContradictionScore: scoring.destinationContradictionScore,
+      destinationConsistencyScore: scoring.destinationConsistencyScore,
+      destinationEvolutionReasons: scoring.destinationEvolutionReasons,
+      portCommodityPriorScores: scoring.portCommodityPriorScores,
+      portCommodityPriorReasons: scoring.portCommodityPriorReasons,
+      contradictionScore: scoring.contradictionScore,
+      contradictionReasons: scoring.contradictionReasons,
+      ensembleEvidenceBreakdown: scoring.ensembleEvidenceBreakdown,
+      dataCompletenessScore: scoring.dataCompletenessScore,
+      confidencePenalty: scoring.confidencePenalty,
+      predictionConfidenceBand: scoring.predictionConfidenceBand,
+      missingCriticalPredictionSignals: scoring.missingCriticalPredictionSignals,
+      commodityPriorProbabilities: scoring.commodityPriorProbabilities,
+      commodityPosteriorProbabilities: scoring.commodityPosteriorProbabilities,
+      commodityEvidenceAdjustments: scoring.commodityEvidenceAdjustments,
+      predictionEntropy: scoring.predictionEntropy,
+      evidenceCoverageScore: scoring.evidenceCoverageScore,
+      uncertaintyPenalty: scoring.uncertaintyPenalty,
+      informationValueSignals: scoring.informationValueSignals,
+      missingInformationValueRanking: scoring.missingInformationValueRanking,
+      seasonalAdjustmentScore: scoring.seasonalAdjustmentScore,
+      seasonalReasoning: scoring.seasonalReasoning,
+      commercialPatternSimilarityScore: scoring.commercialPatternSimilarityScore,
       moroccoBoundReasons: scoring.moroccoBoundReasons,
       agriCargoReasons: scoring.agriCargoReasons,
       commodityReasons: scoring.commodityReasons,
@@ -2196,14 +2635,16 @@ function buildSource(params: {
   };
 }
 
-export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFeed> {
-  const runtime = getRadarRuntimeConfig();
+async function getRadarFeedWithRuntime(
+  runtime: ReturnType<typeof getRadarRuntimeConfig>,
+  filters: VesselFilters = {},
+): Promise<RadarFeed> {
   const liveProvider = runtime.provider === "mock" ? "vesselfinder" : runtime.provider;
 
   if (runtime.mode === "mock") {
     const vessels = await buildRadarVessels(getMockAISProvider(), "mock");
     return {
-      vessels: applyFilters(vessels, filters),
+      vessels: applyFavoritesAndFilters(vessels, filters),
       source: buildSource({ mode: "mock", provider: "mock" }),
     };
   }
@@ -2211,7 +2652,7 @@ export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFe
   if (runtime.validationError) {
     const fallbackVessels = await buildRadarVessels(getMockAISProvider(), "mock");
     return {
-      vessels: applyFilters(fallbackVessels, filters),
+      vessels: applyFavoritesAndFilters(fallbackVessels, filters),
       source: buildSource({
         mode: "mock",
         provider: "mock",
@@ -2223,19 +2664,24 @@ export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFe
   }
 
   try {
-    const provider = getAISProvider();
+    const currentRuntime = getRadarRuntimeConfig();
+    const provider =
+      runtime.mode === currentRuntime.mode && runtime.provider === currentRuntime.provider
+        ? getAISProvider()
+        : getAISProviderForSelection({
+            forceMode: runtime.mode,
+            forceProvider: runtime.provider,
+          });
     const hasFreshCache = Boolean(liveCache && Date.now() - liveCache.fetchedAt <= LIVE_CACHE_TTL_MS);
-    const cachedOrFresh = hasFreshCache && liveCache
-      ? liveCache
-      : await refreshLiveCache(provider, liveProvider);
+    const cachedOrFresh =
+      hasFreshCache && liveCache
+        ? liveCache
+        : await refreshLiveCache(provider, liveProvider);
 
-    const cacheAgeSeconds = Math.max(
-      0,
-      Math.round((Date.now() - cachedOrFresh.fetchedAt) / 1000),
-    );
+    const cacheAgeSeconds = Math.max(0, Math.round((Date.now() - cachedOrFresh.fetchedAt) / 1000));
 
     return {
-      vessels: applyFilters(cachedOrFresh.vessels, filters),
+      vessels: applyFavoritesAndFilters(cachedOrFresh.vessels, filters),
       source: buildSource({
         mode: "live",
         provider: liveProvider,
@@ -2252,7 +2698,7 @@ export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFe
     console.warn(`[RadarUsage] ${message}`);
     const fallbackVessels = await buildRadarVessels(getMockAISProvider(), "mock");
     return {
-      vessels: applyFilters(fallbackVessels, filters),
+      vessels: applyFavoritesAndFilters(fallbackVessels, filters),
       source: buildSource({
         mode: "mock",
         provider: "mock",
@@ -2262,6 +2708,19 @@ export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFe
       warning: message,
     };
   }
+}
+
+export async function getRadarFeed(filters: VesselFilters = {}): Promise<RadarFeed> {
+  const runtime = getRadarRuntimeConfig();
+  return getRadarFeedWithRuntime(runtime, filters);
+}
+
+export async function getRadarFeedForMode(
+  mode: "mock" | "live",
+  filters: VesselFilters = {},
+): Promise<RadarFeed> {
+  const runtime = getRadarRuntimeConfig({ forceMode: mode });
+  return getRadarFeedWithRuntime(runtime, filters);
 }
 
 export async function getLiveValidationPayload(feed: RadarFeed): Promise<LiveValidationPayload> {
@@ -2678,6 +3137,16 @@ export async function getLiveEvaluationPayload(
 
     for (const blocker of entry.missingSignalsForPromotion) {
       addCount(blockerCounts, blocker);
+    }
+
+    for (const blocker of entry.missingCriticalPredictionSignals) {
+      addCount(blockerCounts, blocker);
+    }
+
+    if (entry.contradictionScore >= 55) {
+      addCount(blockerCounts, "High contradiction evidence");
+    } else if (entry.contradictionScore >= 35) {
+      addCount(blockerCounts, "Moderate contradiction evidence");
     }
 
     if (

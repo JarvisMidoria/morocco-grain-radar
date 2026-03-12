@@ -4,6 +4,7 @@ import { MapMode, PortRecord, RadarVessel } from "@/lib/types";
 export interface LiveRadarMapProps {
   initialVessels: RadarVessel[];
   moroccoPorts: PortRecord[];
+  refreshIntervalSeconds?: number;
   filters: {
     detectionPhase: string;
     destination: string;

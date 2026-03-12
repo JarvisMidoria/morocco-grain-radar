@@ -214,10 +214,13 @@ export interface RadarVessel extends LayerReasons {
   topVoyageHypothesis: VoyageHypothesisId;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: VoyageHypothesisConfidence;
+  topVoyageHypothesisProbability: number;
   voyageHypothesisEvidenceStyle: VoyageHypothesisEvidenceStyle;
   voyageHypothesisReasons: string[];
   missingSignalsForVoyageConfirmation: string[];
   alternativeVoyageHypotheses: VoyageHypothesisAlternative[];
+  voyageTemplatePosteriorProbabilities: Record<VoyageHypothesisId, number>;
+  voyageTemplateEntropy: number;
   matchedCommodityKnowledgeNode: string | null;
   terminalCommodityProfile: string | null;
   vesselClassKnowledgeProfile: string;
@@ -230,6 +233,86 @@ export interface RadarVessel extends LayerReasons {
   knowledgeMatchedTerminalIntelligence: boolean;
   knowledgeMatchedCommodityProfile: boolean;
   knowledgeDestinationIntelligenceSupport: boolean;
+  vesselHistoricalProfile: {
+    exportPortVisitCounts: Record<string, number>;
+    moroccoPortVisitCounts: Record<string, number>;
+    corridorCounts: Record<string, number>;
+    voyageTemplateCounts: Record<string, number>;
+    historicalCommodityDistribution: Record<CommodityType, number>;
+    vesselRouteRepetitionScore: number;
+  };
+  vesselVoyageState:
+    | "ballast_arrival"
+    | "port_waiting"
+    | "loading_in_progress"
+    | "laden_departure"
+    | "voyage_confirmed";
+  voyageStateConfidence: "low" | "medium" | "high";
+  voyageStateReasons: string[];
+  destinationEvolutionScore: number;
+  destinationMoroccoConfidence: number;
+  destinationContradictionScore: number;
+  destinationConsistencyScore: number;
+  destinationEvolutionReasons: string[];
+  portCommodityPriorScores: CommodityScores;
+  portCommodityPriorReasons: string[];
+  contradictionScore: number;
+  contradictionReasons: string[];
+  ensembleEvidenceBreakdown: {
+    routeEvidence: number;
+    loadingEvidence: number;
+    portKnowledgeEvidence: number;
+    historicalEvidence: number;
+    destinationEvidence: number;
+    flowPriorEvidence: number;
+    contradictionEvidence: number;
+    overallSupportScore: number;
+  };
+  dataCompletenessScore: number;
+  confidencePenalty: number;
+  predictionConfidenceBand: "weak" | "moderate" | "strong";
+  missingCriticalPredictionSignals: string[];
+  commodityPriorProbabilities: {
+    wheat: number;
+    barley: number;
+    corn: number;
+    soybeanMeal: number;
+  };
+  commodityPosteriorProbabilities: {
+    wheat: number;
+    barley: number;
+    corn: number;
+    soybeanMeal: number;
+  };
+  commodityEvidenceAdjustments: {
+    routeEvidence: CommodityScores;
+    loadingEvidence: CommodityScores;
+    historicalEvidence: CommodityScores;
+    destinationEvidence: CommodityScores;
+    flowPriorEvidence: CommodityScores;
+    contradictionEvidence: CommodityScores;
+    voyageHypothesisEvidence: CommodityScores;
+    seasonalEvidence: CommodityScores;
+    commercialPatternEvidence: CommodityScores;
+  };
+  predictionEntropy: number;
+  evidenceCoverageScore: number;
+  uncertaintyPenalty: number;
+  informationValueSignals: Array<{
+    signal: string;
+    value: number;
+    reason: string;
+    currentlyMissing: boolean;
+  }>;
+  missingInformationValueRanking: Array<{
+    signal: string;
+    value: number;
+    reason: string;
+    currentlyMissing: boolean;
+  }>;
+  seasonalAdjustmentScore: number;
+  seasonalReasoning: string[];
+  commercialPatternSimilarityScore: number;
   routePoints: GeoPoint[];
 
   // Backward-compatible fields used by existing map/table components.
@@ -248,6 +331,7 @@ export interface RadarVessel extends LayerReasons {
   loadingTrendDelta?: number | null;
   confidenceImprovedOverTime?: boolean;
   rollingRetentionReason?: string | null;
+  isFavorite?: boolean;
 }
 
 export interface DashboardMetrics {

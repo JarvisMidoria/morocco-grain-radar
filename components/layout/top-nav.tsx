@@ -10,6 +10,7 @@ const navItems = [
   { href: "/vessels", label: "Vessels" },
   { href: "/ports", label: "Ports" },
   { href: "/analytics", label: "Analytics" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function TopNav() {
@@ -30,7 +31,7 @@ export function TopNav() {
           </div>
         </Link>
 
-        <nav className="grid w-full grid-cols-4 gap-1 rounded-xl border border-slate-200 p-1 sm:flex sm:w-auto sm:items-center">
+        <nav className="grid w-full grid-cols-5 gap-1 rounded-xl border border-slate-200 p-1 sm:flex sm:w-auto sm:items-center">
           {navItems.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (

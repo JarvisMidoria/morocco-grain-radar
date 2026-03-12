@@ -3,6 +3,7 @@ import { HybridAISProvider } from "@/lib/ais/hybrid-provider";
 import { MarineTrafficProvider } from "@/lib/ais/marine-traffic-provider";
 import { MockAISProvider } from "@/lib/ais/mock-provider";
 import { VesselFinderProvider } from "@/lib/ais/vessel-finder-provider";
+import { getProviderApiKey, getRadarSettingsStore } from "@/lib/settings/store";
 import {
   getRadarRuntimeConfig,
   RadarDataMode,
@@ -26,6 +27,12 @@ function resolveProviderSelection(options: ProviderOptions = {}) {
 }
 
 function logProviderSelection(mode: RadarDataMode, provider: RadarProvider) {
+  const aisstreamKey = getProviderApiKey("aisstream");
+  const datalasticKey = getProviderApiKey("datalastic");
+  const vesselfinderKey = getProviderApiKey("vesselfinder");
+  const marinetrafficKey = getProviderApiKey("marinetraffic");
+  const gfwToken = getProviderApiKey("globalFishingWatch");
+
   const selectionKey = `${mode}:${provider}`;
   if (selectionKey === loggedSelectionKey) {
     return;
@@ -34,24 +41,30 @@ function logProviderSelection(mode: RadarDataMode, provider: RadarProvider) {
   loggedSelectionKey = selectionKey;
   console.info(`RADAR DATA MODE: ${mode}`);
   console.info(`AIS PROVIDER: ${provider}`);
-  console.log("GFW token detected:", Boolean(process.env.GFW_API_TOKEN));
+  console.log("GFW token detected:", Boolean(gfwToken));
 
   if (provider === "hybrid") {
-    console.info(`AISSTREAM: ${process.env.AISSTREAM_API_KEY ? "connected" : "missing API key"}`);
-    console.info(`DATALASTIC: ${process.env.DATALASTIC_API_KEY ? "connected" : "missing API key"}`);
+    console.info(`AISSTREAM: ${aisstreamKey ? "connected" : "missing API key"}`);
+    console.info(`DATALASTIC: ${datalasticKey ? "connected" : "missing API key"}`);
   }
 
   if (provider === "vesselfinder") {
-    console.info(`VESSELFINDER: ${process.env.VESSELFINDER_API_KEY ? "connected" : "missing API key"}`);
+    console.info(`VESSELFINDER: ${vesselfinderKey ? "connected" : "missing API key"}`);
   }
 
   if (provider === "marinetraffic") {
-    console.info(`MARINETRAFFIC: ${process.env.MARINETRAFFIC_API_KEY ? "connected" : "missing API key"}`);
+    console.info(`MARINETRAFFIC: ${marinetrafficKey ? "connected" : "missing API key"}`);
   }
 }
 
 function createProvider(options: ProviderOptions = {}): AISProvider {
   const { mode, provider } = resolveProviderSelection(options);
+  const settings = getRadarSettingsStore();
+  const aisstreamKey = getProviderApiKey("aisstream");
+  const datalasticKey = getProviderApiKey("datalastic");
+  const marinetrafficKey = getProviderApiKey("marinetraffic");
+  const vesselfinderKey = getProviderApiKey("vesselfinder");
+  const gfwToken = getProviderApiKey("globalFishingWatch");
 
   logProviderSelection(mode, provider);
 
@@ -60,18 +73,19 @@ function createProvider(options: ProviderOptions = {}): AISProvider {
   }
 
   if (provider === "hybrid") {
-    return new HybridAISProvider(
-      process.env.AISSTREAM_API_KEY ?? "",
-      process.env.DATALASTIC_API_KEY ?? "",
-    );
+    process.env.RADAR_ROLLING_WINDOW_HOURS = String(settings.core.rollingWindowHours);
+    process.env.WATCHLIST_RETENTION_HOURS = String(settings.core.watchlistRetentionHours);
+    process.env.WATCHLIST_REENRICH_HOURS = String(settings.core.reEnrichmentCadenceHours);
+    process.env.GFW_API_TOKEN = gfwToken;
+    return new HybridAISProvider(aisstreamKey, datalasticKey);
   }
 
   if (provider === "marinetraffic") {
-    return new MarineTrafficProvider(process.env.MARINETRAFFIC_API_KEY ?? "");
+    return new MarineTrafficProvider(marinetrafficKey);
   }
 
   if (provider === "vesselfinder") {
-    return new VesselFinderProvider(process.env.VESSELFINDER_API_KEY ?? "");
+    return new VesselFinderProvider(vesselfinderKey);
   }
 
   return new MockAISProvider();
@@ -92,4 +106,14 @@ export function getAISProvider(): AISProvider {
 
 export function getMockAISProvider(): AISProvider {
   return createProvider({ forceMode: "mock", forceProvider: "mock" });
+}
+
+export function resetAISProviderCache() {
+  providerSingleton = null;
+  providerSingletonKey = "";
+  loggedSelectionKey = "";
+}
+
+export function getAISProviderForSelection(options: ProviderOptions): AISProvider {
+  return createProvider(options);
 }

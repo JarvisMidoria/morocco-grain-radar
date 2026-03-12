@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { CommodityConfidenceBadge } from "@/components/dashboard/commodity-confidence-badge";
 import { DetectionPhaseBadge } from "@/components/dashboard/detection-phase-badge";
+import { FavoriteToggle } from "@/components/dashboard/favorite-toggle";
 import { VesselMiniMap } from "@/components/map/vessel-mini-map";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAISProvider } from "@/lib/ais/factory";
@@ -36,7 +37,10 @@ export default async function VesselDetailPage({ params }: VesselDetailPageProps
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{vessel.name}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{vessel.name}</h1>
+            <FavoriteToggle vesselId={vessel.id} initialFavorite={vessel.isFavorite} />
+          </div>
           <p className="text-sm text-slate-500">IMO {vessel.imo} · MMSI {vessel.mmsi} · {vessel.vesselType}</p>
         </div>
         <div className="flex items-center gap-3">

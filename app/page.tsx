@@ -6,6 +6,7 @@ import {
   getRadarFeed,
   LiveVesselValidationEntry,
 } from "@/lib/radar/service";
+import { getPublicRadarSettings } from "@/lib/settings/store";
 import { WatchlistFallbackCandidate } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -143,7 +144,11 @@ function buildWatchlistFallbackCandidate(
 }
 
 export default async function DashboardPage() {
-  const [feed, moroccoPorts] = await Promise.all([getRadarFeed(), getMoroccoDestinationPorts()]);
+  const [feed, moroccoPorts, settings] = await Promise.all([
+    getRadarFeed(),
+    getMoroccoDestinationPorts(),
+    Promise.resolve(getPublicRadarSettings()),
+  ]);
   const metrics = getDashboardMetrics(feed.vessels);
 
   let watchlistFallbackCandidates: WatchlistFallbackCandidate[] = [];
@@ -178,6 +183,7 @@ export default async function DashboardPage() {
       moroccoPorts={moroccoPorts}
       watchlistFallbackCandidates={watchlistFallbackCandidates}
       sourceMode={feed.source.mode}
+      refreshIntervalSeconds={settings.core.refreshIntervalSeconds}
     />
   );
 }

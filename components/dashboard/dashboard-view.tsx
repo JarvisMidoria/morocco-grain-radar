@@ -29,6 +29,7 @@ interface DashboardViewProps {
   moroccoPorts: PortRecord[];
   watchlistFallbackCandidates?: WatchlistFallbackCandidate[];
   sourceMode?: "mock" | "live";
+  refreshIntervalSeconds?: number;
 }
 
 type TableView = "priority" | "tracked" | "watchlist";
@@ -84,6 +85,7 @@ export function DashboardView({
   moroccoPorts,
   watchlistFallbackCandidates = [],
   sourceMode = "mock",
+  refreshIntervalSeconds = 40,
 }: DashboardViewProps) {
   const [detectionPhase, setDetectionPhase] = useState<string>("All");
   const [destination, setDestination] = useState<string>("All");
@@ -610,6 +612,7 @@ export function DashboardView({
             <LiveRadarMap
               initialVessels={filtered}
               moroccoPorts={moroccoPorts}
+              refreshIntervalSeconds={refreshIntervalSeconds}
               filters={{
                 detectionPhase,
                 destination,
