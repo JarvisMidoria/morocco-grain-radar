@@ -6,21 +6,50 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "start:render": "npm run db:deploy && next start -p ${PORT:-3000}",
+    "lint": "next lint",
+    "live:evaluate": "tsx scripts/live-evaluation-report.ts",
+    "db:deploy": "prisma db push --skip-generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "dependencies": {
+    "@next/swc-darwin-arm64": "^14.2.31",
+    "@prisma/client": "^5.22.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.3.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.577.0",
+    "next": "14.2.31",
+    "prisma": "^5.22.0",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.31"
+    "react-leaflet": "^4.2.1",
+    "recharts": "^3.8.0",
+    "tailwind-merge": "^3.5.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@types/leaflet": "^1.9.21",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/ws": "^8.18.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.31",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.31"
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   }
 }

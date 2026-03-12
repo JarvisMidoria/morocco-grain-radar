@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Port {
+  id                  String     @id @default(cuid())
+  name                String
+  country             String
+  code                String     @unique
+  lat                 Float
+  lon                 Float
+  isMoroccoDestination Boolean   @default(false)
+  isLikelyGrainOrigin Boolean    @default(false)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  destinationVoyages  Voyage[]   @relation("DestinationPort")
+  previousVoyages     Voyage[]   @relation("PreviousPort")
+  portCalls           PortCall[]
+
+  @@index([isMoroccoDestination])
+  @@index([isLikelyGrainOrigin])
+}
+
+model Vessel {
+  id              String           @id @default(cuid())
+  imo             String?          @unique
+  mmsi            String?          @unique
+  name            String
+  vesselType      String
+  flag            String
+  deadweight      Int?
+  length          Float?
+  width           Float?
+  lastDraft       Float?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  voyages         Voyage[]
+  portCalls       PortCall[]
+  grainAssessment GrainAssessment?
+
+  @@index([name])
+  @@index([vesselType])
+}
+
+model Voyage {
+  id                String    @id @default(cuid())
+  vesselId          String
+  currentLat        Float
+  currentLon        Float
+  speed             Float?
+  course            Float?
+  heading           Float?
+  destinationText   String?
+  destinationPortId String?
+  eta               DateTime?
+  previousPortId    String?
+  departurePortId   String?
+  departureDetectedAt DateTime?
+  timeSinceDepartureHours Float?
+  estimatedDaysToMorocco Float?
+  currentMaritimeZone String?
+  suspectedDestinationRegion String?
+  detectionPhase     DetectionPhase?
+  originCountry     String?
+  lastSignalAt      DateTime
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  vessel            Vessel    @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+  destinationPort   Port?     @relation("DestinationPort", fields: [destinationPortId], references: [id])
+  previousPort      Port?     @relation("PreviousPort", fields: [previousPortId], references: [id])
+
+  @@index([vesselId])
+  @@index([destinationPortId])
+  @@index([previousPortId])
+  @@index([eta])
+  @@index([lastSignalAt])
+  @@index([departurePortId])
+  @@index([departureDetectedAt])
+  @@index([detectionPhase])
+}
+
+model PortCall {
+  id        String            @id @default(cuid())
+  vesselId  String
+  portId    String
+  eventType PortCallEventType
+  eventTime DateTime
+  createdAt DateTime          @default(now())
+
+  vessel    Vessel            @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+  port      Port              @relation(fields: [portId], references: [id], onDelete: Cascade)
+
+  @@index([portId, eventTime])
+  @@index([vesselId, eventTime])
+}
+
+model GrainAssessment {
+  id              String          @id @default(cuid())
+  vesselId        String          @unique
+  score           Int
+  confidenceLevel ConfidenceLevel
+  moroccoBoundScore Int?
+  agriCargoScore  Int?
+  wheatScore      Int?
+  barleyScore     Int?
+  cornScore       Int?
+  soybeanMealScore Int?
+  mostLikelyCommodity String?
+  commodityConfidenceLabel CommodityHypothesisConfidence?
+  detectionPhase DetectionPhase?
+  reasonsJson     Json
+  scoringReasonsJson Json?
+  commodityReasonsJson Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  vessel          Vessel          @relation(fields: [vesselId], references: [id], onDelete: Cascade)
+
+  @@index([score])
+  @@index([confidenceLevel])
+  @@index([moroccoBoundScore])
+  @@index([agriCargoScore])
+  @@index([mostLikelyCommodity])
+  @@index([detectionPhase])
+}
+
+enum PortCallEventType {
+  ARRIVAL
+  DEPARTURE
+  BERTHED
+  ANCHORED
+}
+
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DetectionPhase {
+  departure_detected
+  morocco_bound_suspected
+  morocco_bound_likely
+  agri_cargo_likely
+  commodity_hypothesis
+  near_arrival_confirmed
+}
+
+enum CommodityHypothesisConfidence {
+  WEAK
+  MODERATE
+  STRONG
+}

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: morocco-grain-radar
+    runtime: node
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:render
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: RADAR_DATA_MODE
+        value: live
+      - key: AIS_PROVIDER
+        value: hybrid
+      - key: AISSTREAM_API_KEY
+        sync: false
+      - key: DATALASTIC_API_KEY
+        sync: false
+      - key: GFW_API_TOKEN
+        sync: false
+      - key: RADAR_LIVE_USAGE_PROFILE
+        value: low
+      - key: RADAR_LOG_API_USAGE
+        value: "true"
