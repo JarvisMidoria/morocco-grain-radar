@@ -19,7 +19,6 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@next/swc-darwin-arm64": "^14.2.31",
     "@prisma/client": "^5.22.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
