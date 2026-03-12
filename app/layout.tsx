@@ -28,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} bg-slate-50 text-slate-900 antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} overflow-x-hidden bg-slate-50 text-slate-900 antialiased`}>
         <TopNav />
         <DataSourceIndicator />
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
