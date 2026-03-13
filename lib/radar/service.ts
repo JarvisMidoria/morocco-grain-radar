@@ -1548,7 +1548,7 @@ function buildValidationEntryFromDebug(
     topVoyageHypothesisConfidence:
       vessel?.topVoyageHypothesisConfidence ?? debug.topVoyageHypothesisConfidence ?? "weak",
     topVoyageHypothesisProbability:
-      vessel?.topVoyageHypothesisProbability ?? debug.topVoyageHypothesisProbability ?? 0,
+      vessel?.topVoyageHypothesisProbability ?? 0,
     voyageHypothesisEvidenceStyle:
       vessel?.voyageHypothesisEvidenceStyle ??
       debug.voyageHypothesisEvidenceStyle ??
