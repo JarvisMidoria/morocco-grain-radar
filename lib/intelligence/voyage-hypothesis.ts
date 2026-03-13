@@ -51,11 +51,14 @@ export interface VoyageHypothesisResult {
   topVoyageHypothesis: VoyageHypothesisId;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: VoyageHypothesisConfidence;
+  topVoyageHypothesisProbability: number;
   alternativeVoyageHypotheses: VoyageHypothesisAlternative[];
   voyageHypothesisReasons: string[];
   missingSignalsForVoyageConfirmation: string[];
   voyageHypothesisEvidenceStyle: VoyageHypothesisEvidenceStyle;
   hypothesisScores: Record<VoyageHypothesisId, number>;
+  voyageTemplatePosteriorProbabilities: Record<VoyageHypothesisId, number>;
+  voyageTemplateEntropy: number;
 }
 
 interface VoyageTemplateResult {
@@ -202,6 +205,33 @@ const TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
 
 function clampScore(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function softmaxProbabilities(scores: number[]) {
+  if (scores.length === 0) {
+    return [];
+  }
+  const temperature = 13;
+  const maxScore = Math.max(...scores);
+  const exponentials = scores.map((value) => Math.exp((value - maxScore) / temperature));
+  const total = exponentials.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) {
+    return scores.map(() => 1 / scores.length);
+  }
+  return exponentials.map((value) => value / total);
+}
+
+function normalizedEntropy(probabilities: number[]) {
+  if (probabilities.length <= 1) {
+    return 0;
+  }
+  let entropy = 0;
+  for (const probability of probabilities) {
+    const value = Math.max(1e-9, probability);
+    entropy += -value * Math.log(value);
+  }
+  const maxEntropy = Math.log(probabilities.length);
+  return clampScore((entropy / maxEntropy) * 100);
 }
 
 function toHypothesisConfidence(score: number, gapFromSecond: number): VoyageHypothesisConfidence {
@@ -848,6 +878,20 @@ export function evaluateVoyageHypotheses(input: VoyageHypothesisInput): VoyageHy
     },
     {} as Record<VoyageHypothesisId, number>,
   );
+  const posteriorByTemplate: Record<VoyageHypothesisId, number> = {} as Record<
+    VoyageHypothesisId,
+    number
+  >;
+  const posteriorValues = softmaxProbabilities(results.map((item) => item.score));
+  for (let index = 0; index < results.length; index += 1) {
+    const template = results[index];
+    const probability = posteriorValues[index] ?? 0;
+    posteriorByTemplate[template.id] = Number(probability.toFixed(4));
+  }
+  const topVoyageHypothesisProbability = Number(
+    (posteriorByTemplate[top.id] ?? 0).toFixed(4),
+  );
+  const voyageTemplateEntropy = normalizedEntropy(posteriorValues);
 
   const reasons = [
     `Top voyage hypothesis: ${top.label} (${top.score})`,
@@ -863,10 +907,13 @@ export function evaluateVoyageHypotheses(input: VoyageHypothesisInput): VoyageHy
     topVoyageHypothesis: top.id,
     topVoyageHypothesisScore: top.score,
     topVoyageHypothesisConfidence: topConfidence,
+    topVoyageHypothesisProbability,
     alternativeVoyageHypotheses: alternatives,
     voyageHypothesisReasons: reasons,
     missingSignalsForVoyageConfirmation: top.missingSignals.slice(0, 6),
     voyageHypothesisEvidenceStyle: evidenceStyle,
     hypothesisScores,
+    voyageTemplatePosteriorProbabilities: posteriorByTemplate,
+    voyageTemplateEntropy,
   };
 }

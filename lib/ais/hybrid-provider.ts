@@ -27,9 +27,22 @@ import {
   assessOperationalSignals,
   OperationalEvidenceConfidence,
 } from "@/lib/intelligence/operational-intelligence";
+import {
+  applyHistoricalObservation,
+  buildEnsembleEvidenceBreakdown,
+  calibratePredictionConfidence,
+  derivePortCommodityPriorScores,
+  evaluateContradiction,
+  evaluateDestinationEvolution,
+  evaluateVoyageState,
+  PredictionConfidenceBand,
+  VesselHistoricalCommercialProfile,
+  VoyageState,
+} from "@/lib/intelligence/prediction-brain";
 import { evaluateVoyageHypotheses } from "@/lib/intelligence/voyage-hypothesis";
 import {
   CommodityConfidenceLabel,
+  CommodityScores,
   CommodityType,
   ConfidenceLevel,
   LatestPosition,
@@ -283,6 +296,7 @@ interface RollingVesselMemory {
   lastIncludedAt: string | null;
   includedCount: number;
   destinationHistory: string[];
+  historicalDestinationSeries: string[];
   corridorHistory: HybridCorridorClassification[];
   draftHistory: Array<{ timestamp: string; draft: number | null; draftDelta: number | null }>;
   loadingHistory: Array<{ timestamp: string; score: number }>;
@@ -328,6 +342,33 @@ interface RollingVesselMemory {
   watchlistDecision: HybridWatchlistDecision;
   promotedToRadarCount: number;
   droppedFromWatchlistCount: number;
+  vesselHistoricalProfile: VesselHistoricalCommercialProfile;
+  vesselVoyageState: VoyageState;
+  voyageStateConfidence: "low" | "medium" | "high";
+  voyageStateReasons: string[];
+  destinationEvolutionScore: number;
+  destinationMoroccoConfidence: number;
+  destinationContradictionScore: number;
+  destinationConsistencyScore: number;
+  destinationEvolutionReasons: string[];
+  portCommodityPriorScores: CommodityScores;
+  portCommodityPriorReasons: string[];
+  contradictionScore: number;
+  contradictionReasons: string[];
+  ensembleEvidenceBreakdown: {
+    routeEvidence: number;
+    loadingEvidence: number;
+    portKnowledgeEvidence: number;
+    historicalEvidence: number;
+    destinationEvidence: number;
+    flowPriorEvidence: number;
+    contradictionEvidence: number;
+    overallSupportScore: number;
+  };
+  dataCompletenessScore: number;
+  confidencePenalty: number;
+  predictionConfidenceBand: PredictionConfidenceBand;
+  missingCriticalPredictionSignals: string[];
 }
 
 interface TemporalAdmissionAdjustment {
@@ -432,8 +473,11 @@ export interface HybridNormalizationDebugRecord {
   topVoyageHypothesis: string;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: "weak" | "moderate" | "strong";
+  topVoyageHypothesisProbability: number;
   voyageHypothesisEvidenceStyle: "explicit_morocco_support" | "candidate_pre_confirmation";
   voyageHypothesisReasons: string[];
+  voyageTemplatePosteriorProbabilities: Record<string, number>;
+  voyageTemplateEntropy: number;
   alternativeVoyageHypotheses: Array<{
     id: string;
     label: string;
@@ -507,6 +551,34 @@ export interface HybridNormalizationDebugRecord {
   knowledgeMatchedTerminalIntelligence: boolean;
   knowledgeMatchedCommodityProfile: boolean;
   knowledgeDestinationIntelligenceSupport: boolean;
+  vesselHistoricalProfile: VesselHistoricalCommercialProfile;
+  historicalDestinationSeries: string[];
+  vesselVoyageState: VoyageState;
+  voyageStateConfidence: "low" | "medium" | "high";
+  voyageStateReasons: string[];
+  destinationEvolutionScore: number;
+  destinationMoroccoConfidence: number;
+  destinationContradictionScore: number;
+  destinationConsistencyScore: number;
+  destinationEvolutionReasons: string[];
+  portCommodityPriorScores: CommodityScores;
+  portCommodityPriorReasons: string[];
+  contradictionScore: number;
+  contradictionReasons: string[];
+  ensembleEvidenceBreakdown: {
+    routeEvidence: number;
+    loadingEvidence: number;
+    portKnowledgeEvidence: number;
+    historicalEvidence: number;
+    destinationEvidence: number;
+    flowPriorEvidence: number;
+    contradictionEvidence: number;
+    overallSupportScore: number;
+  };
+  dataCompletenessScore: number;
+  confidencePenalty: number;
+  predictionConfidenceBand: PredictionConfidenceBand;
+  missingCriticalPredictionSignals: string[];
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   firstRelevantSeenAt: string | null;
@@ -631,6 +703,33 @@ function isMoroccoHint(value: string) {
     destinationLooksMorocco(value) ||
     MOROCCO_PORT_KEYWORDS.some((keyword) => normalized.includes(keyword))
   );
+}
+
+function inferMoroccoHintFromDestination(value: string) {
+  return isMoroccoHint(value);
+}
+
+function inferMoroccoPortFromDestination(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("casablanca") || normalized.includes("macas")) {
+    return "Casablanca";
+  }
+  if (normalized.includes("jorf") || normalized.includes("majlf")) {
+    return "Jorf Lasfar";
+  }
+  if (normalized.includes("agadir") || normalized.includes("maaga")) {
+    return "Agadir";
+  }
+  if (normalized.includes("tanger") || normalized.includes("tangier") || normalized.includes("matng")) {
+    return "Tanger Med";
+  }
+  if (normalized.includes("nador") || normalized.includes("mandr")) {
+    return "Nador";
+  }
+  if (normalized.includes("safi") || normalized.includes("masfi")) {
+    return "Safi";
+  }
+  return "Morocco (unspecified)";
 }
 
 function hasAnyKeyword(value: string, keywords: string[]) {
@@ -1154,6 +1253,8 @@ function computePromotionReadiness(params: {
   topVoyageHypothesis: string;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: "weak" | "moderate" | "strong";
+  topVoyageHypothesisProbability: number;
+  voyageTemplateEntropy: number;
   voyageHypothesisEvidenceStyle: "explicit_morocco_support" | "candidate_pre_confirmation";
   gfwSupportScore: number;
   gfwMoroccoVisitCount: number;
@@ -1273,6 +1374,23 @@ function computePromotionReadiness(params: {
     missingSignals.push("Clearer Morocco-oriented voyage pattern");
   }
 
+  if (params.topVoyageHypothesisProbability >= 0.48) {
+    score += 7;
+    reasons.push("Probabilistic voyage posterior is concentrated on the leading template.");
+  } else if (params.topVoyageHypothesisProbability >= 0.38) {
+    score += 4;
+  } else if (params.topVoyageHypothesisProbability < 0.25) {
+    score -= 5;
+    missingSignals.push("Higher voyage-template posterior concentration");
+  }
+
+  if (params.voyageTemplateEntropy <= 52) {
+    score += 4;
+  } else if (params.voyageTemplateEntropy >= 78) {
+    score -= 4;
+    missingSignals.push("Lower voyage-template ambiguity");
+  }
+
   if (
     params.voyageHypothesisEvidenceStyle === "candidate_pre_confirmation" &&
     !params.explicitMoroccoSignals &&
@@ -1329,6 +1447,8 @@ function computeWatchlistPriority(params: {
   topVoyageHypothesis: string;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: "weak" | "moderate" | "strong";
+  topVoyageHypothesisProbability: number;
+  voyageTemplateEntropy: number;
   voyageHypothesisEvidenceStyle: "explicit_morocco_support" | "candidate_pre_confirmation";
   missingSignalsForVoyageConfirmationCount: number;
   gfwSupportScore: number;
@@ -1483,6 +1603,22 @@ function computeWatchlistPriority(params: {
   ) {
     score -= 9;
     reasons.push("Ambiguous non-Morocco voyage hypothesis lowers watchlist priority.");
+  }
+
+  if (params.topVoyageHypothesisProbability >= 0.48) {
+    score += 6;
+    reasons.push("High probabilistic support for the leading voyage template.");
+  } else if (params.topVoyageHypothesisProbability >= 0.38) {
+    score += 3;
+  } else if (params.topVoyageHypothesisProbability < 0.24) {
+    score -= 5;
+    reasons.push("Voyage posterior remains diffuse across templates.");
+  }
+
+  if (params.voyageTemplateEntropy <= 52) {
+    score += 3;
+  } else if (params.voyageTemplateEntropy >= 80) {
+    score -= 4;
   }
 
   if (
@@ -2216,6 +2352,7 @@ export class HybridAISProvider implements AISProvider {
       lastIncludedAt: null,
       includedCount: 0,
       destinationHistory: [],
+      historicalDestinationSeries: [],
       corridorHistory: [],
       draftHistory: [],
       loadingHistory: [],
@@ -2261,6 +2398,50 @@ export class HybridAISProvider implements AISProvider {
       watchlistDecision: "not_eligible",
       promotedToRadarCount: 0,
       droppedFromWatchlistCount: 0,
+      vesselHistoricalProfile: {
+        exportPortVisitCounts: {},
+        moroccoPortVisitCounts: {},
+        corridorCounts: {},
+        voyageTemplateCounts: {},
+        historicalCommodityDistribution: {
+          wheat: 0,
+          barley: 0,
+          corn: 0,
+          soybeanMeal: 0,
+        },
+        vesselRouteRepetitionScore: 0,
+      },
+      vesselVoyageState: "ballast_arrival",
+      voyageStateConfidence: "low",
+      voyageStateReasons: [],
+      destinationEvolutionScore: 0,
+      destinationMoroccoConfidence: 0,
+      destinationContradictionScore: 0,
+      destinationConsistencyScore: 0,
+      destinationEvolutionReasons: [],
+      portCommodityPriorScores: {
+        wheatScore: 0,
+        barleyScore: 0,
+        cornScore: 0,
+        soybeanMealScore: 0,
+      },
+      portCommodityPriorReasons: [],
+      contradictionScore: 0,
+      contradictionReasons: [],
+      ensembleEvidenceBreakdown: {
+        routeEvidence: 0,
+        loadingEvidence: 0,
+        portKnowledgeEvidence: 0,
+        historicalEvidence: 0,
+        destinationEvidence: 0,
+        flowPriorEvidence: 0,
+        contradictionEvidence: 0,
+        overallSupportScore: 0,
+      },
+      dataCompletenessScore: 0,
+      confidencePenalty: 0,
+      predictionConfidenceBand: "weak",
+      missingCriticalPredictionSignals: [],
     };
 
     next.vesselId = params.record.vesselId;
@@ -2312,9 +2493,11 @@ export class HybridAISProvider implements AISProvider {
     next.destinationSampleCount += 1;
     if (params.record.normalizedDestinationText) {
       next.destinationHistory.push(params.record.normalizedDestinationText);
+      next.historicalDestinationSeries.push(params.record.normalizedDestinationText);
     }
     next.corridorHistory.push(params.record.corridorClassification as HybridCorridorClassification);
     next.destinationHistory = next.destinationHistory.slice(-80);
+    next.historicalDestinationSeries = next.historicalDestinationSeries.slice(-120);
     next.corridorHistory = next.corridorHistory.slice(-80);
 
     if (params.record.loadingTerminalMatch) {
@@ -2441,6 +2624,24 @@ export class HybridAISProvider implements AISProvider {
     next.promotionReadinessScore = params.record.promotionReadinessScore;
     next.promotionReadinessReasons = params.record.promotionReadinessReasons;
     next.missingSignalsForPromotion = params.record.missingSignalsForPromotion;
+    next.vesselHistoricalProfile = params.record.vesselHistoricalProfile;
+    next.vesselVoyageState = params.record.vesselVoyageState;
+    next.voyageStateConfidence = params.record.voyageStateConfidence;
+    next.voyageStateReasons = params.record.voyageStateReasons;
+    next.destinationEvolutionScore = params.record.destinationEvolutionScore;
+    next.destinationMoroccoConfidence = params.record.destinationMoroccoConfidence;
+    next.destinationContradictionScore = params.record.destinationContradictionScore;
+    next.destinationConsistencyScore = params.record.destinationConsistencyScore;
+    next.destinationEvolutionReasons = params.record.destinationEvolutionReasons;
+    next.portCommodityPriorScores = params.record.portCommodityPriorScores;
+    next.portCommodityPriorReasons = params.record.portCommodityPriorReasons;
+    next.contradictionScore = params.record.contradictionScore;
+    next.contradictionReasons = params.record.contradictionReasons;
+    next.ensembleEvidenceBreakdown = params.record.ensembleEvidenceBreakdown;
+    next.dataCompletenessScore = params.record.dataCompletenessScore;
+    next.confidencePenalty = params.record.confidencePenalty;
+    next.predictionConfidenceBand = params.record.predictionConfidenceBand;
+    next.missingCriticalPredictionSignals = params.record.missingCriticalPredictionSignals;
 
     if (params.record.admissionDecision === "included") {
       next.includedCount += 1;
@@ -2602,6 +2803,7 @@ export class HybridAISProvider implements AISProvider {
     );
     next.admissionHistory = next.admissionHistory.filter((item) => new Date(item.timestamp).getTime() >= cutoffMs);
     next.destinationHistory = next.destinationHistory.slice(-80);
+    next.historicalDestinationSeries = next.historicalDestinationSeries.slice(-120);
     next.corridorHistory = next.corridorHistory.slice(-80);
 
     this.rollingMemoryByKey.set(rollingKey, next);
@@ -2670,6 +2872,25 @@ export class HybridAISProvider implements AISProvider {
       promotionEligible: memory.watchlistDecision === "promoted",
       promotionReason: memory.watchlistPromotionReason,
       dropReason: memory.watchlistDropReason,
+      vesselHistoricalProfile: memory.vesselHistoricalProfile,
+      historicalDestinationSeries: memory.historicalDestinationSeries,
+      vesselVoyageState: memory.vesselVoyageState,
+      voyageStateConfidence: memory.voyageStateConfidence,
+      voyageStateReasons: memory.voyageStateReasons,
+      destinationEvolutionScore: memory.destinationEvolutionScore,
+      destinationMoroccoConfidence: memory.destinationMoroccoConfidence,
+      destinationContradictionScore: memory.destinationContradictionScore,
+      destinationConsistencyScore: memory.destinationConsistencyScore,
+      destinationEvolutionReasons: memory.destinationEvolutionReasons,
+      portCommodityPriorScores: memory.portCommodityPriorScores,
+      portCommodityPriorReasons: memory.portCommodityPriorReasons,
+      contradictionScore: memory.contradictionScore,
+      contradictionReasons: memory.contradictionReasons,
+      ensembleEvidenceBreakdown: memory.ensembleEvidenceBreakdown,
+      dataCompletenessScore: memory.dataCompletenessScore,
+      confidencePenalty: memory.confidencePenalty,
+      predictionConfidenceBand: memory.predictionConfidenceBand,
+      missingCriticalPredictionSignals: memory.missingCriticalPredictionSignals,
     };
   }
 
@@ -3122,6 +3343,7 @@ export class HybridAISProvider implements AISProvider {
           lastIncludedAt: dbLastSignalAt,
           includedCount: 1,
           destinationHistory: [normalizeDestinationText(dbDestinationText)],
+          historicalDestinationSeries: [normalizeDestinationText(dbDestinationText)],
           corridorHistory: ["irrelevant_other"],
           draftHistory: [
             {
@@ -3181,6 +3403,52 @@ export class HybridAISProvider implements AISProvider {
           watchlistDecision: "not_eligible",
           promotedToRadarCount: 1,
           droppedFromWatchlistCount: 0,
+          vesselHistoricalProfile: {
+            exportPortVisitCounts: {},
+            moroccoPortVisitCounts: inferMoroccoHintFromDestination(dbDestinationText)
+              ? { [inferMoroccoPortFromDestination(dbDestinationText)]: 1 }
+              : {},
+            corridorCounts: { irrelevant_other: 1 },
+            voyageTemplateCounts: {},
+            historicalCommodityDistribution: {
+              wheat: 0,
+              barley: 0,
+              corn: 0,
+              soybeanMeal: 0,
+            },
+            vesselRouteRepetitionScore: 0,
+          },
+          vesselVoyageState: "voyage_confirmed",
+          voyageStateConfidence: "medium",
+          voyageStateReasons: ["Recovered from persisted voyage snapshot."],
+          destinationEvolutionScore: 0,
+          destinationMoroccoConfidence: inferMoroccoHintFromDestination(dbDestinationText) ? 60 : 0,
+          destinationContradictionScore: 0,
+          destinationConsistencyScore: 50,
+          destinationEvolutionReasons: ["Historical destination sequence reconstructed from persisted snapshot."],
+          portCommodityPriorScores: {
+            wheatScore: 0,
+            barleyScore: 0,
+            cornScore: 0,
+            soybeanMealScore: 0,
+          },
+          portCommodityPriorReasons: [],
+          contradictionScore: 0,
+          contradictionReasons: [],
+          ensembleEvidenceBreakdown: {
+            routeEvidence: 0,
+            loadingEvidence: 0,
+            portKnowledgeEvidence: 0,
+            historicalEvidence: 0,
+            destinationEvidence: 0,
+            flowPriorEvidence: 0,
+            contradictionEvidence: 0,
+            overallSupportScore: 0,
+          },
+          dataCompletenessScore: 0,
+          confidencePenalty: 0,
+          predictionConfidenceBand: "weak",
+          missingCriticalPredictionSignals: [],
         });
 
         this.rollingKeyByVesselId.set(dbVesselId, rollingKey);
@@ -4074,6 +4342,8 @@ export class HybridAISProvider implements AISProvider {
       topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
       topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
       topVoyageHypothesisConfidence: voyageHypothesis.topVoyageHypothesisConfidence,
+      topVoyageHypothesisProbability: voyageHypothesis.topVoyageHypothesisProbability,
+      voyageTemplateEntropy: voyageHypothesis.voyageTemplateEntropy,
       voyageHypothesisEvidenceStyle: voyageHypothesis.voyageHypothesisEvidenceStyle,
       gfwSupportScore: gfwSupport.supportScore,
       gfwMoroccoVisitCount: gfwProfile.gfwMoroccoVisitCount,
@@ -4110,6 +4380,8 @@ export class HybridAISProvider implements AISProvider {
       topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
       topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
       topVoyageHypothesisConfidence: voyageHypothesis.topVoyageHypothesisConfidence,
+      topVoyageHypothesisProbability: voyageHypothesis.topVoyageHypothesisProbability,
+      voyageTemplateEntropy: voyageHypothesis.voyageTemplateEntropy,
       voyageHypothesisEvidenceStyle: voyageHypothesis.voyageHypothesisEvidenceStyle,
       missingSignalsForVoyageConfirmationCount:
         voyageHypothesis.missingSignalsForVoyageConfirmation.length,
@@ -4124,6 +4396,159 @@ export class HybridAISProvider implements AISProvider {
       loadingQueuePlausibility: operationalSignal.loadingQueuePlausibility,
       operationalEvidenceConfidence: operationalSignal.operationalEvidenceConfidence,
     });
+    const historicalDestinationSeries = [
+      ...(priorRollingMemory?.historicalDestinationSeries ?? priorRollingMemory?.destinationHistory ?? []),
+      normalizeDestinationText(destinationText || "UNKNOWN"),
+    ].slice(-120);
+    const vesselHistoricalProfile = applyHistoricalObservation(
+      priorRollingMemory?.vesselHistoricalProfile ?? {
+        exportPortVisitCounts: {},
+        moroccoPortVisitCounts: {},
+        corridorCounts: {},
+        voyageTemplateCounts: {},
+        historicalCommodityDistribution: {
+          wheat: 0,
+          barley: 0,
+          corn: 0,
+          soybeanMeal: 0,
+        },
+        vesselRouteRepetitionScore: 0,
+      },
+      {
+        exportPortName: rawDeparturePortName || exportSignal.port?.name || null,
+        exportPortRelevant: departureIsGrainOrigin,
+        destinationText: destinationText || null,
+        destinationMoroccoRelevant: moroccoHint,
+        corridor: corridor.classification,
+        voyageTemplate: voyageHypothesis.topVoyageHypothesis,
+        mostLikelyCommodity: topCommodity,
+      },
+    );
+    const destinationEvolution = evaluateDestinationEvolution({
+      destinationHistory: historicalDestinationSeries.slice(0, -1),
+      currentDestinationText: destinationText || "UNKNOWN",
+    });
+    const commodityFlowPrior = derivePortCommodityPriorScores(knowledgeSnapshot.commodityBias);
+    const voyageState = evaluateVoyageState({
+      dryBulkCompatible: normalizedType.dryBulkCompatible,
+      speed,
+      routeTowardMorocco: routeCorridorCompatible,
+      destinationMoroccoHint: moroccoHint,
+      nearSeededExportArea: nearSeededExportAreaNow,
+      repeatedNearSeededExportArea: operationalSignal.repeatedObservedNearSeededExportArea,
+      lowSpeedDurationNearSeededPortHours: operationalSignal.lowSpeedDurationNearSeededPortHours,
+      portStayHours: loadingSignal.portStayHours,
+      draftDelta: loadingSignal.draftDelta,
+      loadingSignalScore: loadingSignal.loadingSignalScore,
+      loadingConfidence: loadingSignal.loadingConfidence,
+      timeSinceDepartureHours: hoursSinceDeparture ?? 0,
+      observationCount: Math.max(1, (priorRollingMemory?.detectionCount ?? 0) + 1),
+    });
+    const contradiction = evaluateContradiction({
+      dryBulkCompatible: normalizedType.dryBulkCompatible,
+      corridorRelevant: corridor.relevant,
+      routeTowardMorocco: routeCorridorCompatible,
+      exportPortRelevant: departureIsGrainOrigin,
+      destinationMoroccoHint: moroccoHint,
+      destinationContradictionScore: destinationEvolution.destinationContradictionScore,
+      loadingSignalScore: loadingSignal.loadingSignalScore,
+      portStayHours: loadingSignal.portStayHours,
+      vesselRouteRepetitionScore: vesselHistoricalProfile.vesselRouteRepetitionScore,
+      topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
+      topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
+    });
+    const averageFlowPrior = Math.round(
+      (commodityFlowPrior.scores.wheatScore +
+        commodityFlowPrior.scores.barleyScore +
+        commodityFlowPrior.scores.cornScore +
+        commodityFlowPrior.scores.soybeanMealScore) /
+        4,
+    );
+    const ensembleEvidenceBreakdown = buildEnsembleEvidenceBreakdown({
+      routeEvidence: layerScores.moroccoBoundScore,
+      loadingEvidence: loadingSignal.loadingSignalScore,
+      portKnowledgeEvidence: knowledgeSnapshot.knowledgeSupportScore,
+      historicalEvidence: vesselHistoricalProfile.vesselRouteRepetitionScore,
+      destinationEvidence: Math.round(
+        destinationEvolution.destinationMoroccoConfidence * 0.6 +
+          destinationEvolution.destinationConsistencyScore * 0.4,
+      ),
+      flowPriorEvidence: averageFlowPrior,
+      contradictionEvidence: contradiction.contradictionScore,
+    });
+    const confidenceCalibration = calibratePredictionConfidence({
+      hasDestinationText: Boolean(destinationText.trim()),
+      hasEta: Boolean(rawEta.trim()),
+      hasDepartureSignal: Boolean(rawDeparturePortCode || rawDeparturePortName),
+      hasDraft: typeof rawDraft === "number" && rawDraft > 0,
+      hasLoadingEvidence: loadingSignal.loadingSignalScore >= 35,
+      hasHistoricalEvidence: vesselHistoricalProfile.vesselRouteRepetitionScore >= 30,
+      hasKnowledgeEvidence: knowledgeSnapshot.knowledgeSupportScore >= 30,
+      hasRouteEvidence: routeCorridorCompatible,
+      observationCount: Math.max(1, (priorRollingMemory?.detectionCount ?? 0) + 1),
+      contradictionScore: contradiction.contradictionScore,
+      ensembleSupportScore: ensembleEvidenceBreakdown.overallSupportScore,
+      additionalMissingSignals: [
+        ...loadingSignal.missingCriticalSignals,
+        ...promotionReadiness.missingSignals.slice(0, 2),
+      ],
+    });
+    if (destinationEvolution.destinationEvolutionScore >= 62 && contradiction.contradictionScore <= 35) {
+      promotionReadiness.score = clampScore(promotionReadiness.score + 4);
+      promotionReadiness.reasons.push(
+        "Destination evolution strengthened promotion readiness.",
+      );
+      watchlistPriority.score = clampScore(watchlistPriority.score + 4);
+      watchlistPriority.reasons.push(
+        "Destination evolution increased watchlist priority.",
+      );
+    }
+    if (vesselHistoricalProfile.vesselRouteRepetitionScore >= 58) {
+      promotionReadiness.score = clampScore(promotionReadiness.score + 3);
+      promotionReadiness.reasons.push(
+        "Historical commercial profile shows repeated relevant route patterns.",
+      );
+      watchlistPriority.score = clampScore(watchlistPriority.score + 3);
+      watchlistPriority.reasons.push(
+        "Historical commercial profile increased watchlist priority.",
+      );
+    }
+    if (
+      voyageState.vesselVoyageState === "laden_departure" ||
+      voyageState.vesselVoyageState === "voyage_confirmed"
+    ) {
+      promotionReadiness.score = clampScore(promotionReadiness.score + 4);
+      promotionReadiness.reasons.push(
+        `Voyage state ${voyageState.vesselVoyageState.replaceAll("_", " ")} supports promotion readiness.`,
+      );
+      watchlistPriority.score = clampScore(watchlistPriority.score + 2);
+      watchlistPriority.reasons.push(
+        `Voyage state ${voyageState.vesselVoyageState.replaceAll("_", " ")} supports watchlist monitoring.`,
+      );
+    }
+    if (contradiction.contradictionScore >= 55) {
+      promotionReadiness.score = clampScore(promotionReadiness.score - 8);
+      promotionReadiness.reasons.push("Contradiction engine reduced promotion readiness.");
+      if (!promotionReadiness.missingSignals.includes("Resolve contradiction signals")) {
+        promotionReadiness.missingSignals.push("Resolve contradiction signals");
+      }
+      watchlistPriority.score = clampScore(watchlistPriority.score - 10);
+      watchlistPriority.reasons.push("Contradiction engine reduced watchlist priority.");
+    } else if (contradiction.contradictionScore >= 35) {
+      promotionReadiness.score = clampScore(promotionReadiness.score - 4);
+      watchlistPriority.score = clampScore(watchlistPriority.score - 4);
+    }
+    if (confidenceCalibration.predictionConfidenceBand === "weak") {
+      promotionReadiness.score = clampScore(
+        promotionReadiness.score - Math.round(confidenceCalibration.confidencePenalty * 0.08),
+      );
+      watchlistPriority.score = clampScore(
+        watchlistPriority.score - Math.round(confidenceCalibration.confidencePenalty * 0.06),
+      );
+      if (!promotionReadiness.missingSignals.includes("Improve data completeness for prediction confidence")) {
+        promotionReadiness.missingSignals.push("Improve data completeness for prediction confidence");
+      }
+    }
     const reEnrichPolicy = this.shouldReenrichWatchlist(priorRollingMemory, {
       destinationText: destinationText || "UNKNOWN",
       corridorClassification: corridor.classification,
@@ -4232,8 +4657,11 @@ export class HybridAISProvider implements AISProvider {
         topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
         topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
         topVoyageHypothesisConfidence: voyageHypothesis.topVoyageHypothesisConfidence,
+        topVoyageHypothesisProbability: voyageHypothesis.topVoyageHypothesisProbability,
         voyageHypothesisEvidenceStyle: voyageHypothesis.voyageHypothesisEvidenceStyle,
         voyageHypothesisReasons: voyageHypothesis.voyageHypothesisReasons,
+        voyageTemplatePosteriorProbabilities: voyageHypothesis.voyageTemplatePosteriorProbabilities,
+        voyageTemplateEntropy: voyageHypothesis.voyageTemplateEntropy,
         alternativeVoyageHypotheses: voyageHypothesis.alternativeVoyageHypotheses,
         missingSignalsForVoyageConfirmation:
           voyageHypothesis.missingSignalsForVoyageConfirmation,
@@ -4274,6 +4702,25 @@ export class HybridAISProvider implements AISProvider {
         knowledgeMatchedTerminalIntelligence: knowledgeSnapshot.matchedTerminalIntelligence,
         knowledgeMatchedCommodityProfile: knowledgeSnapshot.matchedCommodityProfile,
         knowledgeDestinationIntelligenceSupport: knowledgeSnapshot.destinationIntelligenceSupport,
+        vesselHistoricalProfile,
+        historicalDestinationSeries,
+        vesselVoyageState: voyageState.vesselVoyageState,
+        voyageStateConfidence: voyageState.voyageStateConfidence,
+        voyageStateReasons: voyageState.voyageStateReasons,
+        destinationEvolutionScore: destinationEvolution.destinationEvolutionScore,
+        destinationMoroccoConfidence: destinationEvolution.destinationMoroccoConfidence,
+        destinationContradictionScore: destinationEvolution.destinationContradictionScore,
+        destinationConsistencyScore: destinationEvolution.destinationConsistencyScore,
+        destinationEvolutionReasons: destinationEvolution.destinationEvolutionReasons,
+        portCommodityPriorScores: commodityFlowPrior.scores,
+        portCommodityPriorReasons: commodityFlowPrior.reasons,
+        contradictionScore: contradiction.contradictionScore,
+        contradictionReasons: contradiction.contradictionReasons,
+        ensembleEvidenceBreakdown,
+        dataCompletenessScore: confidenceCalibration.dataCompletenessScore,
+        confidencePenalty: confidenceCalibration.confidencePenalty,
+        predictionConfidenceBand: confidenceCalibration.predictionConfidenceBand,
+        missingCriticalPredictionSignals: confidenceCalibration.missingCriticalPredictionSignals,
         firstSeenAt: null,
         lastSeenAt: null,
         firstRelevantSeenAt: null,
@@ -4506,8 +4953,11 @@ export class HybridAISProvider implements AISProvider {
       topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
       topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
       topVoyageHypothesisConfidence: voyageHypothesis.topVoyageHypothesisConfidence,
+      topVoyageHypothesisProbability: voyageHypothesis.topVoyageHypothesisProbability,
       voyageHypothesisEvidenceStyle: voyageHypothesis.voyageHypothesisEvidenceStyle,
       voyageHypothesisReasons: voyageHypothesis.voyageHypothesisReasons,
+      voyageTemplatePosteriorProbabilities: voyageHypothesis.voyageTemplatePosteriorProbabilities,
+      voyageTemplateEntropy: voyageHypothesis.voyageTemplateEntropy,
       alternativeVoyageHypotheses: voyageHypothesis.alternativeVoyageHypotheses,
       missingSignalsForVoyageConfirmation:
         voyageHypothesis.missingSignalsForVoyageConfirmation,
@@ -4548,6 +4998,25 @@ export class HybridAISProvider implements AISProvider {
       knowledgeMatchedTerminalIntelligence: knowledgeSnapshot.matchedTerminalIntelligence,
       knowledgeMatchedCommodityProfile: knowledgeSnapshot.matchedCommodityProfile,
       knowledgeDestinationIntelligenceSupport: knowledgeSnapshot.destinationIntelligenceSupport,
+      vesselHistoricalProfile,
+      historicalDestinationSeries,
+      vesselVoyageState: voyageState.vesselVoyageState,
+      voyageStateConfidence: voyageState.voyageStateConfidence,
+      voyageStateReasons: voyageState.voyageStateReasons,
+      destinationEvolutionScore: destinationEvolution.destinationEvolutionScore,
+      destinationMoroccoConfidence: destinationEvolution.destinationMoroccoConfidence,
+      destinationContradictionScore: destinationEvolution.destinationContradictionScore,
+      destinationConsistencyScore: destinationEvolution.destinationConsistencyScore,
+      destinationEvolutionReasons: destinationEvolution.destinationEvolutionReasons,
+      portCommodityPriorScores: commodityFlowPrior.scores,
+      portCommodityPriorReasons: commodityFlowPrior.reasons,
+      contradictionScore: contradiction.contradictionScore,
+      contradictionReasons: contradiction.contradictionReasons,
+      ensembleEvidenceBreakdown,
+      dataCompletenessScore: confidenceCalibration.dataCompletenessScore,
+      confidencePenalty: confidenceCalibration.confidencePenalty,
+      predictionConfidenceBand: confidenceCalibration.predictionConfidenceBand,
+      missingCriticalPredictionSignals: confidenceCalibration.missingCriticalPredictionSignals,
       firstSeenAt: null,
       lastSeenAt: null,
       firstRelevantSeenAt: null,

@@ -10,6 +10,24 @@ import {
   TerminalType,
 } from "@/lib/data/live-intelligence-config";
 import {
+  averageCommodityScore,
+  buildEnsembleEvidenceBreakdown,
+  calibratePredictionConfidence,
+  derivePortCommodityPriorScores,
+  DestinationEvolutionAssessment,
+  EnsembleEvidenceBreakdown,
+  evaluateContradiction,
+  evaluateDestinationEvolution,
+  inferProbabilisticCommodityModel,
+  evaluateVoyageState,
+  CommodityProbabilityDistribution,
+  CommodityEvidenceAdjustments,
+  InformationValueSignal,
+  PredictionConfidenceBand,
+  VesselHistoricalCommercialProfile,
+  VoyageState,
+} from "@/lib/intelligence/prediction-brain";
+import {
   CommodityConfidenceLabel,
   CommodityScores,
   CommodityType,
@@ -64,6 +82,19 @@ export interface IntelligenceScoringInput {
     arrivalTimestampConfidence?: "low" | "medium" | "high";
     terminalMatchConfidenceHint?: "low" | "medium" | "high";
   };
+  historicalCommercialProfile?: VesselHistoricalCommercialProfile;
+  destinationHistory?: string[];
+  destinationEvolution?: DestinationEvolutionAssessment;
+  portCommodityPriorScores?: CommodityScores;
+  contradictionSignal?: {
+    contradictionScore: number;
+    contradictionReasons: string[];
+  };
+  voyageState?: {
+    vesselVoyageState: VoyageState;
+    voyageStateConfidence: "low" | "medium" | "high";
+    voyageStateReasons: string[];
+  };
 }
 
 export interface IntelligenceScoringResult {
@@ -91,10 +122,13 @@ export interface IntelligenceScoringResult {
   topVoyageHypothesis: VoyageHypothesisId;
   topVoyageHypothesisScore: number;
   topVoyageHypothesisConfidence: VoyageHypothesisConfidence;
+  topVoyageHypothesisProbability: number;
   voyageHypothesisEvidenceStyle: VoyageHypothesisEvidenceStyle;
   voyageHypothesisReasons: string[];
   missingSignalsForVoyageConfirmation: string[];
   alternativeVoyageHypotheses: VoyageHypothesisAlternative[];
+  voyageTemplatePosteriorProbabilities: Record<VoyageHypothesisId, number>;
+  voyageTemplateEntropy: number;
   detectionPhase: DetectionPhase;
   moroccoBoundReasons: string[];
   agriCargoReasons: string[];
@@ -112,6 +146,35 @@ export interface IntelligenceScoringResult {
   knowledgeMatchedCommodityProfile: boolean;
   knowledgeDestinationIntelligenceSupport: boolean;
   confidenceLevel: ConfidenceLevel;
+  vesselHistoricalProfile: VesselHistoricalCommercialProfile;
+  vesselVoyageState: VoyageState;
+  voyageStateConfidence: "low" | "medium" | "high";
+  voyageStateReasons: string[];
+  destinationEvolutionScore: number;
+  destinationMoroccoConfidence: number;
+  destinationContradictionScore: number;
+  destinationConsistencyScore: number;
+  destinationEvolutionReasons: string[];
+  portCommodityPriorScores: CommodityScores;
+  portCommodityPriorReasons: string[];
+  contradictionScore: number;
+  contradictionReasons: string[];
+  ensembleEvidenceBreakdown: EnsembleEvidenceBreakdown;
+  dataCompletenessScore: number;
+  confidencePenalty: number;
+  predictionConfidenceBand: PredictionConfidenceBand;
+  missingCriticalPredictionSignals: string[];
+  commodityPriorProbabilities: CommodityProbabilityDistribution;
+  commodityPosteriorProbabilities: CommodityProbabilityDistribution;
+  commodityEvidenceAdjustments: CommodityEvidenceAdjustments;
+  predictionEntropy: number;
+  evidenceCoverageScore: number;
+  uncertaintyPenalty: number;
+  informationValueSignals: InformationValueSignal[];
+  missingInformationValueRanking: InformationValueSignal[];
+  seasonalAdjustmentScore: number;
+  seasonalReasoning: string[];
+  commercialPatternSimilarityScore: number;
 }
 
 const PENALTY_TYPES = [
@@ -645,6 +708,36 @@ function inferKnowledgeCorridor(currentMaritimeZone: string) {
   return null;
 }
 
+function inferOriginClusterFromDeparture(departurePort?: PortRecord) {
+  const signature = `${departurePort?.id ?? ""} ${departurePort?.code ?? ""} ${departurePort?.name ?? ""}`.toLowerCase();
+  if (
+    signature.includes("rouen") ||
+    signature.includes("la-rochelle") ||
+    signature.includes("la rochelle") ||
+    signature.includes("dunkerque") ||
+    signature.includes("nantes")
+  ) {
+    return "western_europe" as const;
+  }
+  if (
+    signature.includes("odessa") ||
+    signature.includes("chornomorsk") ||
+    signature.includes("constanta") ||
+    signature.includes("varna") ||
+    signature.includes("novorossiysk") ||
+    signature.includes("pivdennyi")
+  ) {
+    return "black_sea" as const;
+  }
+  if (signature.includes("new-orleans") || signature.includes("houston")) {
+    return "us_gulf" as const;
+  }
+  if (signature.includes("rosario") || signature.includes("santos")) {
+    return "south_atlantic" as const;
+  }
+  return "unknown" as const;
+}
+
 function buildKnowledgeContext(
   input: IntelligenceScoringInput,
   loadingTerminalName: string | null,
@@ -682,6 +775,76 @@ function buildKnowledgeContext(
     matchedCommodityProfile: snapshot.matchedCommodityProfile,
     destinationIntelligenceSupport: snapshot.destinationIntelligenceSupport,
   };
+}
+
+function ensureHistoricalProfile(
+  profile: IntelligenceScoringInput["historicalCommercialProfile"],
+): VesselHistoricalCommercialProfile {
+  if (profile) {
+    return {
+      exportPortVisitCounts: { ...profile.exportPortVisitCounts },
+      moroccoPortVisitCounts: { ...profile.moroccoPortVisitCounts },
+      corridorCounts: { ...profile.corridorCounts },
+      voyageTemplateCounts: { ...profile.voyageTemplateCounts },
+      historicalCommodityDistribution: {
+        wheat: profile.historicalCommodityDistribution.wheat ?? 0,
+        barley: profile.historicalCommodityDistribution.barley ?? 0,
+        corn: profile.historicalCommodityDistribution.corn ?? 0,
+        soybeanMeal: profile.historicalCommodityDistribution.soybeanMeal ?? 0,
+      },
+      vesselRouteRepetitionScore: clampScore(profile.vesselRouteRepetitionScore ?? 0),
+    };
+  }
+
+  return {
+    exportPortVisitCounts: {},
+    moroccoPortVisitCounts: {},
+    corridorCounts: {},
+    voyageTemplateCounts: {},
+    historicalCommodityDistribution: {
+      wheat: 0,
+      barley: 0,
+      corn: 0,
+      soybeanMeal: 0,
+    },
+    vesselRouteRepetitionScore: 0,
+  };
+}
+
+function scoreHistoricalEvidence(
+  profile: VesselHistoricalCommercialProfile,
+  routePortIds: string[],
+) {
+  const commodityTotal =
+    profile.historicalCommodityDistribution.wheat +
+    profile.historicalCommodityDistribution.barley +
+    profile.historicalCommodityDistribution.corn +
+    profile.historicalCommodityDistribution.soybeanMeal;
+
+  const routeSupport = hasMoroccoHistoricalPattern(routePortIds) ? 28 : 0;
+  const profileSupport = profile.vesselRouteRepetitionScore * 0.55;
+  const exportSupport = Object.keys(profile.exportPortVisitCounts).length > 0 ? 12 : 0;
+  const moroccoSupport = Object.keys(profile.moroccoPortVisitCounts).length > 0 ? 12 : 0;
+  const templateSupport = Object.keys(profile.voyageTemplateCounts).length > 0 ? 10 : 0;
+  const commoditySupport = commodityTotal >= 2 ? 8 : commodityTotal > 0 ? 4 : 0;
+
+  return clampScore(
+    routeSupport + profileSupport + exportSupport + moroccoSupport + templateSupport + commoditySupport,
+  );
+}
+
+function adjustCommodityWithPriors(
+  baseScores: CommodityScores,
+  priorScores: CommodityScores,
+) {
+  return {
+    wheatScore: clampScore(baseScores.wheatScore + (priorScores.wheatScore - 50) * 0.08),
+    barleyScore: clampScore(baseScores.barleyScore + (priorScores.barleyScore - 50) * 0.08),
+    cornScore: clampScore(baseScores.cornScore + (priorScores.cornScore - 50) * 0.08),
+    soybeanMealScore: clampScore(
+      baseScores.soybeanMealScore + (priorScores.soybeanMealScore - 50) * 0.08,
+    ),
+  } satisfies CommodityScores;
 }
 
 function scoreCommodityHypothesis(
@@ -958,6 +1121,41 @@ function determineDetectionPhase(params: {
 export function scoreVesselIntelligence(input: IntelligenceScoringInput): IntelligenceScoringResult {
   const morocco = scoreMoroccoBound(input);
   const agri = scoreAgriCargo(input, morocco.direction.consistent);
+  const vesselHistoricalProfile = ensureHistoricalProfile(input.historicalCommercialProfile);
+  const destinationEvolution =
+    input.destinationEvolution ??
+    evaluateDestinationEvolution({
+      destinationHistory: input.destinationHistory ?? [],
+      currentDestinationText: input.destinationText,
+    });
+  const portCommodityPrior = input.portCommodityPriorScores
+    ? { scores: input.portCommodityPriorScores, reasons: ["Flow priors supplied by live normalization."] }
+    : derivePortCommodityPriorScores(agri.knowledge.commodityBias);
+  const historicalEvidenceScore = scoreHistoricalEvidence(
+    vesselHistoricalProfile,
+    input.historicalRoutePortIds,
+  );
+  const voyageState =
+    input.voyageState ??
+    evaluateVoyageState({
+      dryBulkCompatible:
+        input.vesselType.toLowerCase().includes("bulk") ||
+        input.vesselType.toLowerCase().includes("general cargo") ||
+        input.vesselType.toLowerCase().includes("dry cargo"),
+      speed: input.speed,
+      routeTowardMorocco: morocco.direction.consistent,
+      destinationMoroccoHint: morocco.destinationHint,
+      nearSeededExportArea: input.timeSinceDepartureHours <= 24 && Boolean(input.departurePort?.isLikelyGrainOrigin),
+      repeatedNearSeededExportArea: historicalEvidenceScore >= 45,
+      lowSpeedDurationNearSeededPortHours:
+        input.speed <= 1.5 && input.timeSinceDepartureHours <= 24 ? input.timeSinceDepartureHours : 0,
+      portStayHours: agri.loadingSignal.portStayHours,
+      draftDelta: agri.loadingSignal.draftDelta,
+      loadingSignalScore: agri.loadingSignal.loadingSignalScore,
+      loadingConfidence: agri.loadingSignal.loadingConfidence,
+      timeSinceDepartureHours: input.timeSinceDepartureHours,
+      observationCount: Math.max(1, input.destinationHistory?.length ?? 1),
+    });
   const preliminaryVoyageHypothesis = evaluateVoyageHypotheses({
     vesselType: input.vesselType,
     deadweight: input.deadweight,
@@ -1029,8 +1227,12 @@ export function scoreVesselIntelligence(input: IntelligenceScoringInput): Intell
 
   let moroccoBoundScore = morocco.score;
   let agriCargoScore = agri.score;
+  let commodityScores = { ...commodity.scores };
+  let commodityConfidenceLabel = commodity.commodityConfidenceLabel;
+  let mostLikelyCommodity = commodity.mostLikelyCommodity;
   const moroccoReasons = [...morocco.reasons];
   const agriReasons = [...agri.reasons];
+  const commodityReasons = [...commodity.reasons];
 
   if (
     finalVoyageHypothesis.topVoyageHypothesis !== "ambiguous_dry_bulk_non_morocco" &&
@@ -1064,11 +1266,322 @@ export function scoreVesselIntelligence(input: IntelligenceScoringInput): Intell
     agriReasons.push("Ambiguous non-Morocco voyage pattern keeps agri-cargo score conservative.");
   }
 
+  if (voyageState.vesselVoyageState === "laden_departure") {
+    agriCargoScore = clampScore(agriCargoScore + 3);
+    agriReasons.push("Voyage state: laden departure supports agri-cargo plausibility.");
+  } else if (voyageState.vesselVoyageState === "voyage_confirmed") {
+    moroccoBoundScore = clampScore(moroccoBoundScore + 3);
+    agriCargoScore = clampScore(agriCargoScore + 4);
+    moroccoReasons.push("Voyage state: confirmed voyage supports Morocco-bound interpretation.");
+    agriReasons.push("Voyage state: confirmed voyage supports agri-cargo continuity.");
+  } else if (voyageState.vesselVoyageState === "ballast_arrival") {
+    agriCargoScore = clampScore(agriCargoScore - 3);
+    agriReasons.push("Voyage state: ballast-arrival bias keeps cargo confidence conservative.");
+  }
+
+  commodityScores = adjustCommodityWithPriors(commodityScores, portCommodityPrior.scores);
+  if (portCommodityPrior.reasons.length > 0) {
+    commodityReasons.push(...portCommodityPrior.reasons);
+  }
+
+  const contradiction =
+    input.contradictionSignal ??
+    evaluateContradiction({
+      dryBulkCompatible:
+        input.vesselType.toLowerCase().includes("bulk") ||
+        input.vesselType.toLowerCase().includes("general cargo") ||
+        input.vesselType.toLowerCase().includes("dry cargo"),
+      corridorRelevant: morocco.direction.consistent,
+      routeTowardMorocco: morocco.direction.consistent,
+      exportPortRelevant: Boolean(input.departurePort?.isLikelyGrainOrigin),
+      destinationMoroccoHint: morocco.destinationHint,
+      destinationContradictionScore: destinationEvolution.destinationContradictionScore,
+      loadingSignalScore: agri.loadingSignal.loadingSignalScore,
+      portStayHours: agri.loadingSignal.portStayHours,
+      vesselRouteRepetitionScore: vesselHistoricalProfile.vesselRouteRepetitionScore,
+      topVoyageHypothesis: finalVoyageHypothesis.topVoyageHypothesis,
+      topVoyageHypothesisScore: finalVoyageHypothesis.topVoyageHypothesisScore,
+    });
+
+  if (contradiction.contradictionScore >= 60) {
+    moroccoBoundScore = clampScore(moroccoBoundScore - 8);
+    agriCargoScore = clampScore(agriCargoScore - 8);
+    commodityScores = {
+      wheatScore: clampScore(commodityScores.wheatScore - 6),
+      barleyScore: clampScore(commodityScores.barleyScore - 6),
+      cornScore: clampScore(commodityScores.cornScore - 6),
+      soybeanMealScore: clampScore(commodityScores.soybeanMealScore - 6),
+    };
+    moroccoReasons.push("Contradiction engine reduced Morocco-bound confidence.");
+    agriReasons.push("Contradiction engine reduced agri-cargo confidence.");
+    commodityReasons.push("Contradiction engine reduced commodity confidence.");
+  } else if (contradiction.contradictionScore >= 35) {
+    moroccoBoundScore = clampScore(moroccoBoundScore - 4);
+    agriCargoScore = clampScore(agriCargoScore - 4);
+    moroccoReasons.push("Moderate contradictions keep scores conservative.");
+    agriReasons.push("Moderate contradictions keep scores conservative.");
+  }
+
+  const flowPriorEvidence = averageCommodityScore(portCommodityPrior.scores);
+  const ensembleEvidenceBreakdown = buildEnsembleEvidenceBreakdown({
+    routeEvidence: moroccoBoundScore,
+    loadingEvidence: agri.loadingSignal.loadingSignalScore,
+    portKnowledgeEvidence: agri.knowledge.knowledgeSupportScore,
+    historicalEvidence: historicalEvidenceScore,
+    destinationEvidence: Math.round(
+      destinationEvolution.destinationMoroccoConfidence * 0.6 +
+        destinationEvolution.destinationConsistencyScore * 0.4,
+    ),
+    flowPriorEvidence,
+    contradictionEvidence: contradiction.contradictionScore,
+  });
+
+  const ensembleDelta = Math.round((ensembleEvidenceBreakdown.overallSupportScore - 50) / 16);
+  if (ensembleDelta !== 0) {
+    moroccoBoundScore = clampScore(moroccoBoundScore + Math.max(-4, Math.min(4, ensembleDelta)));
+    agriCargoScore = clampScore(agriCargoScore + Math.max(-5, Math.min(5, ensembleDelta)));
+    if (ensembleDelta > 0) {
+      moroccoReasons.push("Ensemble evidence alignment improved Morocco-bound confidence.");
+      agriReasons.push("Ensemble evidence alignment improved agri-cargo confidence.");
+      commodityReasons.push("Ensemble evidence improved commodity hypothesis support.");
+    } else {
+      moroccoReasons.push("Ensemble evidence remained mixed; confidence reduced.");
+      agriReasons.push("Ensemble evidence remained mixed; confidence reduced.");
+      commodityReasons.push("Ensemble evidence remained mixed; commodity confidence reduced.");
+    }
+  }
+
+  const calibration = calibratePredictionConfidence({
+    hasDestinationText: input.destinationText.trim().length > 0,
+    hasEta: input.estimatedDaysToMorocco > 0 && Number.isFinite(input.estimatedDaysToMorocco),
+    hasDepartureSignal: Boolean(input.departurePort?.code || input.departurePort?.name),
+    hasDraft: input.lastDraft > 0 || (agri.loadingSignal.departureDraftEstimate ?? 0) > 0,
+    hasLoadingEvidence: agri.loadingSignal.loadingSignalScore >= 35,
+    hasHistoricalEvidence: historicalEvidenceScore >= 30,
+    hasKnowledgeEvidence: agri.knowledge.knowledgeSupportScore >= 30,
+    hasRouteEvidence: morocco.direction.consistent,
+    observationCount: Math.max(1, input.destinationHistory?.length ?? 1),
+    contradictionScore: contradiction.contradictionScore,
+    ensembleSupportScore: ensembleEvidenceBreakdown.overallSupportScore,
+    additionalMissingSignals: [
+      ...agri.loadingSignal.missingCriticalSignals,
+      ...(finalVoyageHypothesis.missingSignalsForVoyageConfirmation.slice(0, 2) ?? []),
+    ],
+  });
+
+  const voyageHypothesis = {
+    ...finalVoyageHypothesis,
+    topVoyageHypothesisScore: finalVoyageHypothesis.topVoyageHypothesisScore,
+    voyageHypothesisReasons: [...finalVoyageHypothesis.voyageHypothesisReasons],
+    missingSignalsForVoyageConfirmation: [...finalVoyageHypothesis.missingSignalsForVoyageConfirmation],
+  };
+
+  if (
+    vesselHistoricalProfile.vesselRouteRepetitionScore >= 60 &&
+    voyageHypothesis.topVoyageHypothesis !== "ambiguous_dry_bulk_non_morocco"
+  ) {
+    voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore + 4);
+    voyageHypothesis.voyageHypothesisReasons.push(
+      "Historical vessel commercial profile strengthens top voyage hypothesis.",
+    );
+  }
+
+  if (
+    destinationEvolution.destinationEvolutionScore >= 62 &&
+    destinationEvolution.destinationMoroccoConfidence >= 50 &&
+    voyageHypothesis.topVoyageHypothesis !== "ambiguous_dry_bulk_non_morocco"
+  ) {
+    voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore + 3);
+    voyageHypothesis.voyageHypothesisReasons.push(
+      "Destination evolution supports hypothesis continuity despite incomplete destination text.",
+    );
+  }
+
+  if (contradiction.contradictionScore >= 55) {
+    if (voyageHypothesis.topVoyageHypothesis !== "ambiguous_dry_bulk_non_morocco") {
+      voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore - 7);
+      voyageHypothesis.missingSignalsForVoyageConfirmation.push("Resolve contradiction signals");
+      voyageHypothesis.voyageHypothesisReasons.push(
+        "Contradiction evidence reduced voyage hypothesis confidence.",
+      );
+    } else {
+      voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore + 4);
+    }
+  }
+
+  voyageHypothesis.topVoyageHypothesisConfidence =
+    voyageHypothesis.topVoyageHypothesisScore >= 84
+      ? "strong"
+      : voyageHypothesis.topVoyageHypothesisScore >= 70
+        ? "moderate"
+        : "weak";
+
+  const probabilistic = inferProbabilisticCommodityModel({
+    heuristicCommodityScores: commodityScores,
+    commodityPriorScores: portCommodityPrior.scores,
+    routeEvidence: moroccoBoundScore,
+    loadingEvidence: agri.loadingSignal.loadingSignalScore,
+    historicalEvidence: historicalEvidenceScore,
+    destinationEvidence: Math.round(
+      destinationEvolution.destinationMoroccoConfidence * 0.6 +
+        destinationEvolution.destinationConsistencyScore * 0.4,
+    ),
+    flowPriorEvidence,
+    contradictionEvidence: contradiction.contradictionScore,
+    vesselHistoricalProfile,
+    topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
+    topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
+    voyageTemplatePosteriorProbabilities: Object.fromEntries(
+      Object.entries(voyageHypothesis.voyageTemplatePosteriorProbabilities ?? {}).map(([key, value]) => [
+        key,
+        Number(value),
+      ]),
+    ),
+    corridorClassification: inferKnowledgeCorridor(input.currentMaritimeZone),
+    terminalType: agri.loadingSignal.matchedTerminalType,
+    destinationMoroccoConfidence: destinationEvolution.destinationMoroccoConfidence,
+    hasDraftObservation: input.lastDraft > 0 || (agri.loadingSignal.departureDraftEstimate ?? 0) > 0,
+    hasDepartureSignal: Boolean(input.departurePort?.code || input.departurePort?.name),
+    observationCount: Math.max(1, input.destinationHistory?.length ?? 1),
+    originCluster: inferOriginClusterFromDeparture(input.departurePort),
+  });
+
+  const posteriorCommodityScores = {
+    wheatScore: Math.round(probabilistic.commodityPosteriorProbabilities.wheat * 100),
+    barleyScore: Math.round(probabilistic.commodityPosteriorProbabilities.barley * 100),
+    cornScore: Math.round(probabilistic.commodityPosteriorProbabilities.corn * 100),
+    soybeanMealScore: Math.round(probabilistic.commodityPosteriorProbabilities.soybeanMeal * 100),
+  } satisfies CommodityScores;
+
+  const probabilisticBlendWeight = Math.max(
+    0.1,
+    Math.min(
+      0.32,
+      (probabilistic.evidenceCoverageScore / 100) * 0.28 - (probabilistic.predictionEntropy / 100) * 0.1,
+    ),
+  );
+
+  commodityScores = {
+    wheatScore: clampScore(
+      commodityScores.wheatScore * (1 - probabilisticBlendWeight) +
+        posteriorCommodityScores.wheatScore * probabilisticBlendWeight,
+    ),
+    barleyScore: clampScore(
+      commodityScores.barleyScore * (1 - probabilisticBlendWeight) +
+        posteriorCommodityScores.barleyScore * probabilisticBlendWeight,
+    ),
+    cornScore: clampScore(
+      commodityScores.cornScore * (1 - probabilisticBlendWeight) +
+        posteriorCommodityScores.cornScore * probabilisticBlendWeight,
+    ),
+    soybeanMealScore: clampScore(
+      commodityScores.soybeanMealScore * (1 - probabilisticBlendWeight) +
+        posteriorCommodityScores.soybeanMealScore * probabilisticBlendWeight,
+    ),
+  };
+  commodityReasons.push(
+    `Probabilistic posterior blended into commodity scores (weight ${Math.round(probabilisticBlendWeight * 100)}%).`,
+  );
+
+  if (probabilistic.uncertaintyPenalty >= 65) {
+    voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore - 4);
+    voyageHypothesis.voyageHypothesisReasons.push(
+      "High probabilistic uncertainty reduced voyage hypothesis confidence.",
+    );
+  } else if (
+    probabilistic.uncertaintyPenalty <= 35 &&
+    (voyageHypothesis.topVoyageHypothesisProbability ?? 0) >= 0.42
+  ) {
+    voyageHypothesis.topVoyageHypothesisScore = clampScore(voyageHypothesis.topVoyageHypothesisScore + 3);
+    voyageHypothesis.voyageHypothesisReasons.push(
+      "Probabilistic template posterior supports voyage hypothesis confidence.",
+    );
+  }
+
+  if (calibration.confidencePenalty > 0) {
+    const moroccoPenalty = Math.round(calibration.confidencePenalty * 0.22);
+    const agriPenalty = Math.round(calibration.confidencePenalty * 0.2);
+    const commodityPenalty = Math.round(calibration.confidencePenalty * 0.18);
+    moroccoBoundScore = clampScore(moroccoBoundScore - moroccoPenalty);
+    agriCargoScore = clampScore(agriCargoScore - agriPenalty);
+    commodityScores = {
+      wheatScore: clampScore(commodityScores.wheatScore - commodityPenalty),
+      barleyScore: clampScore(commodityScores.barleyScore - commodityPenalty),
+      cornScore: clampScore(commodityScores.cornScore - commodityPenalty),
+      soybeanMealScore: clampScore(commodityScores.soybeanMealScore - commodityPenalty),
+    };
+    moroccoReasons.push(`Confidence calibration penalty applied (-${moroccoPenalty}).`);
+    agriReasons.push(`Confidence calibration penalty applied (-${agriPenalty}).`);
+    commodityReasons.push(`Confidence calibration penalty applied (-${commodityPenalty}).`);
+  }
+
+  const probabilisticUncertaintyPenalty = Math.round(probabilistic.uncertaintyPenalty * 0.12);
+  if (probabilisticUncertaintyPenalty > 0) {
+    moroccoBoundScore = clampScore(moroccoBoundScore - Math.round(probabilisticUncertaintyPenalty * 0.5));
+    agriCargoScore = clampScore(agriCargoScore - Math.round(probabilisticUncertaintyPenalty * 0.45));
+    commodityScores = {
+      wheatScore: clampScore(commodityScores.wheatScore - Math.round(probabilisticUncertaintyPenalty * 0.35)),
+      barleyScore: clampScore(commodityScores.barleyScore - Math.round(probabilisticUncertaintyPenalty * 0.35)),
+      cornScore: clampScore(commodityScores.cornScore - Math.round(probabilisticUncertaintyPenalty * 0.35)),
+      soybeanMealScore: clampScore(
+        commodityScores.soybeanMealScore - Math.round(probabilisticUncertaintyPenalty * 0.35),
+      ),
+    };
+    moroccoReasons.push("Probabilistic uncertainty penalty applied.");
+    agriReasons.push("Probabilistic uncertainty penalty applied.");
+    commodityReasons.push("Probabilistic uncertainty penalty applied.");
+  }
+
+  const rankedCommodity = [
+    { commodity: "wheat" as const, score: commodityScores.wheatScore },
+    { commodity: "barley" as const, score: commodityScores.barleyScore },
+    { commodity: "corn" as const, score: commodityScores.cornScore },
+    { commodity: "soybeanMeal" as const, score: commodityScores.soybeanMealScore },
+  ].sort((a, b) => b.score - a.score);
+  mostLikelyCommodity = rankedCommodity[0]?.commodity ?? mostLikelyCommodity;
+  const commodityGap = (rankedCommodity[0]?.score ?? 0) - (rankedCommodity[1]?.score ?? 0);
+  commodityConfidenceLabel =
+    rankedCommodity[0]?.score >= 72 &&
+    commodityGap >= 14 &&
+    agriCargoScore >= 68 &&
+    moroccoBoundScore >= 65 &&
+    calibration.predictionConfidenceBand !== "weak"
+      ? "strong hypothesis"
+      : rankedCommodity[0]?.score >= 58 &&
+          commodityGap >= 9 &&
+          calibration.predictionConfidenceBand !== "weak"
+        ? "moderate hypothesis"
+        : "weak hypothesis";
+
+  commodityReasons.push(
+    `Most likely commodity recalibrated: ${mostLikelyCommodity} (${rankedCommodity[0]?.score ?? 0}) with ${commodityConfidenceLabel}.`,
+  );
+
+  const combinedPredictionConfidenceBand: PredictionConfidenceBand =
+    calibration.predictionConfidenceBand === "weak" || probabilistic.uncertaintyPenalty >= 60
+      ? "weak"
+      : calibration.predictionConfidenceBand === "strong" &&
+          probabilistic.predictionEntropy <= 45 &&
+          probabilistic.evidenceCoverageScore >= 62
+        ? "strong"
+        : "moderate";
+
+  voyageHypothesis.topVoyageHypothesisConfidence =
+    voyageHypothesis.topVoyageHypothesisScore >= 84
+      ? "strong"
+      : voyageHypothesis.topVoyageHypothesisScore >= 70
+        ? "moderate"
+        : "weak";
+  const topHypothesisProbabilityRaw =
+    voyageHypothesis.voyageTemplatePosteriorProbabilities?.[voyageHypothesis.topVoyageHypothesis] ??
+    Math.min(0.95, Math.max(0.08, voyageHypothesis.topVoyageHypothesisScore / 100));
+  voyageHypothesis.topVoyageHypothesisProbability = Number(topHypothesisProbabilityRaw.toFixed(4));
+
   const detectionPhase = determineDetectionPhase({
     estimatedDaysToMorocco: input.estimatedDaysToMorocco,
     moroccoBoundScore,
     agriCargoScore,
-    commodityConfidenceLabel: commodity.commodityConfidenceLabel,
+    commodityConfidenceLabel,
     timeSinceDepartureHours: input.timeSinceDepartureHours,
     destinationPort: input.destinationPort,
   });
@@ -1092,21 +1605,24 @@ export function scoreVesselIntelligence(input: IntelligenceScoringInput): Intell
     arrivalDraftConfidence: agri.loadingSignal.arrivalDraftConfidence,
     departureDraftConfidence: agri.loadingSignal.departureDraftConfidence,
     draftDeltaConfidence: agri.loadingSignal.draftDeltaConfidence,
-    commodityScores: commodity.scores,
+    commodityScores,
     knowledgeCommodityScoreDeltas: commodity.knowledgeCommodityScoreDeltas,
-    mostLikelyCommodity: commodity.mostLikelyCommodity,
-    commodityConfidenceLabel: commodity.commodityConfidenceLabel,
-    topVoyageHypothesis: finalVoyageHypothesis.topVoyageHypothesis,
-    topVoyageHypothesisScore: finalVoyageHypothesis.topVoyageHypothesisScore,
-    topVoyageHypothesisConfidence: finalVoyageHypothesis.topVoyageHypothesisConfidence,
-    voyageHypothesisEvidenceStyle: finalVoyageHypothesis.voyageHypothesisEvidenceStyle,
-    voyageHypothesisReasons: finalVoyageHypothesis.voyageHypothesisReasons,
-    missingSignalsForVoyageConfirmation: finalVoyageHypothesis.missingSignalsForVoyageConfirmation,
-    alternativeVoyageHypotheses: finalVoyageHypothesis.alternativeVoyageHypotheses,
+    mostLikelyCommodity,
+    commodityConfidenceLabel,
+    topVoyageHypothesis: voyageHypothesis.topVoyageHypothesis,
+    topVoyageHypothesisScore: voyageHypothesis.topVoyageHypothesisScore,
+    topVoyageHypothesisConfidence: voyageHypothesis.topVoyageHypothesisConfidence,
+    topVoyageHypothesisProbability: voyageHypothesis.topVoyageHypothesisProbability,
+    voyageHypothesisEvidenceStyle: voyageHypothesis.voyageHypothesisEvidenceStyle,
+    voyageHypothesisReasons: voyageHypothesis.voyageHypothesisReasons,
+    missingSignalsForVoyageConfirmation: voyageHypothesis.missingSignalsForVoyageConfirmation,
+    alternativeVoyageHypotheses: voyageHypothesis.alternativeVoyageHypotheses,
+    voyageTemplatePosteriorProbabilities: voyageHypothesis.voyageTemplatePosteriorProbabilities,
+    voyageTemplateEntropy: voyageHypothesis.voyageTemplateEntropy,
     detectionPhase,
     moroccoBoundReasons: moroccoReasons,
     agriCargoReasons: agriReasons,
-    commodityReasons: commodity.reasons,
+    commodityReasons,
     matchedCommodityKnowledgeNode: agri.knowledge.matchedCommodityKnowledgeNode,
     terminalCommodityProfile: agri.knowledge.terminalCommodityProfile,
     vesselClassKnowledgeProfile: agri.knowledge.vesselClassKnowledgeProfile,
@@ -1118,7 +1634,46 @@ export function scoreVesselIntelligence(input: IntelligenceScoringInput): Intell
     knowledgeMatchedTerminalIntelligence: agri.knowledge.matchedTerminalIntelligence,
     knowledgeMatchedCommodityProfile: agri.knowledge.matchedCommodityProfile,
     knowledgeDestinationIntelligenceSupport: agri.knowledge.destinationIntelligenceSupport,
-    confidenceLevel: toConfidence(moroccoBoundScore),
+    confidenceLevel:
+      combinedPredictionConfidenceBand === "weak"
+        ? moroccoBoundScore >= 80
+          ? "Medium"
+          : toConfidence(moroccoBoundScore)
+        : toConfidence(moroccoBoundScore),
+    vesselHistoricalProfile,
+    vesselVoyageState: voyageState.vesselVoyageState,
+    voyageStateConfidence: voyageState.voyageStateConfidence,
+    voyageStateReasons: voyageState.voyageStateReasons,
+    destinationEvolutionScore: destinationEvolution.destinationEvolutionScore,
+    destinationMoroccoConfidence: destinationEvolution.destinationMoroccoConfidence,
+    destinationContradictionScore: destinationEvolution.destinationContradictionScore,
+    destinationConsistencyScore: destinationEvolution.destinationConsistencyScore,
+    destinationEvolutionReasons: destinationEvolution.destinationEvolutionReasons,
+    portCommodityPriorScores: portCommodityPrior.scores,
+    portCommodityPriorReasons: portCommodityPrior.reasons,
+    contradictionScore: contradiction.contradictionScore,
+    contradictionReasons: contradiction.contradictionReasons,
+    ensembleEvidenceBreakdown,
+    dataCompletenessScore: calibration.dataCompletenessScore,
+    confidencePenalty: calibration.confidencePenalty,
+    predictionConfidenceBand: combinedPredictionConfidenceBand,
+    missingCriticalPredictionSignals: Array.from(
+      new Set([
+        ...calibration.missingCriticalPredictionSignals,
+        ...probabilistic.missingInformationValueRanking.slice(0, 2).map((item) => item.signal),
+      ]),
+    ),
+    commodityPriorProbabilities: probabilistic.commodityPriorProbabilities,
+    commodityPosteriorProbabilities: probabilistic.commodityPosteriorProbabilities,
+    commodityEvidenceAdjustments: probabilistic.commodityEvidenceAdjustments,
+    predictionEntropy: probabilistic.predictionEntropy,
+    evidenceCoverageScore: probabilistic.evidenceCoverageScore,
+    uncertaintyPenalty: probabilistic.uncertaintyPenalty,
+    informationValueSignals: probabilistic.informationValueSignals,
+    missingInformationValueRanking: probabilistic.missingInformationValueRanking,
+    seasonalAdjustmentScore: probabilistic.seasonalAdjustmentScore,
+    seasonalReasoning: probabilistic.seasonalReasoning,
+    commercialPatternSimilarityScore: probabilistic.commercialPatternSimilarityScore,
   };
 }
 
