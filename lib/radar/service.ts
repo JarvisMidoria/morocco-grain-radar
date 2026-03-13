@@ -1663,7 +1663,7 @@ function buildValidationEntryFromDebug(
     commodityHypothesisReasons: vessel?.commodityReasons ?? [],
     vesselHistoricalProfile:
       vessel?.vesselHistoricalProfile ??
-      debug.vesselHistoricalProfile ?? {
+      {
         exportPortVisitCounts: {},
         moroccoPortVisitCounts: {},
         corridorCounts: {},
