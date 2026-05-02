@@ -51,6 +51,16 @@ function formatVoyageHypothesis(value: string) {
   return value.replaceAll("_", " ");
 }
 
+const shortEtaDateFormatter = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  timeZone: "UTC",
+});
+
+function formatShortEtaDate(value: string) {
+  return shortEtaDateFormatter.format(new Date(value));
+}
+
 function phasePriorityWeight(phase: DetectionPhase) {
   switch (phase) {
     case "near_arrival_confirmed":
@@ -578,7 +588,7 @@ export function DashboardView({
                           </TableCell>
                           <TableCell className="align-top">
                             <div className="font-medium text-slate-900">
-                              {new Date(vessel.eta).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                              {formatShortEtaDate(vessel.eta)}
                             </div>
                             <div className="mt-1 text-xs text-slate-500">{vessel.estimatedDaysToMorocco.toFixed(1)}d</div>
                           </TableCell>
