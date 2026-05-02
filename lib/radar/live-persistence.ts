@@ -1,9 +1,3 @@
-import {
-  CommodityHypothesisConfidence,
-  ConfidenceLevel,
-  DetectionPhase,
-  Prisma,
-} from "@prisma/client";
 import { isPrismaAvailable, prisma } from "@/lib/db/prisma";
 import { PortCallRecord, PortRecord, RadarVessel } from "@/lib/types";
 
@@ -20,7 +14,7 @@ interface PersistLiveSnapshotResult {
   errorCode?: "DB_UNAVAILABLE" | "PERSISTENCE_FAILED";
 }
 
-function toConfidenceLevel(value: RadarVessel["confidenceLevel"]): ConfidenceLevel {
+function toConfidenceLevel(value: RadarVessel["confidenceLevel"]): "HIGH" | "MEDIUM" | "LOW" {
   if (value === "High") {
     return "HIGH";
   }
@@ -34,7 +28,7 @@ function toConfidenceLevel(value: RadarVessel["confidenceLevel"]): ConfidenceLev
 
 function toCommodityConfidenceLabel(
   value: RadarVessel["commodityConfidenceLabel"],
-): CommodityHypothesisConfidence {
+): "STRONG" | "MODERATE" | "WEAK" {
   if (value === "strong hypothesis") {
     return "STRONG";
   }
@@ -46,7 +40,7 @@ function toCommodityConfidenceLabel(
   return "WEAK";
 }
 
-function toDetectionPhase(value: RadarVessel["detectionPhase"]): DetectionPhase {
+function toDetectionPhase(value: RadarVessel["detectionPhase"]): RadarVessel["detectionPhase"] {
   return value;
 }
 
@@ -59,12 +53,14 @@ function uniquePortCalls(calls: PortCallRecord[]) {
 }
 
 function isDbUnavailableError(error: unknown) {
-  if (error instanceof Prisma.PrismaClientInitializationError) {
-    return true;
-  }
-
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return ["P1001", "P1002", "P1017"].includes(error.code);
+  if (error && typeof error === "object") {
+    const typed = error as { name?: string; code?: string };
+    if (typed.name === "PrismaClientInitializationError") {
+      return true;
+    }
+    if (typed.name === "PrismaClientKnownRequestError") {
+      return ["P1001", "P1002", "P1017"].includes(typed.code ?? "");
+    }
   }
 
   const message = error instanceof Error ? error.message.toLowerCase() : "";

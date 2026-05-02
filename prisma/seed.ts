@@ -1,6 +1,4 @@
 import {
-  CommodityHypothesisConfidence,
-  ConfidenceLevel,
   PrismaClient,
 } from "@prisma/client";
 import { buildMockDataset } from "@/lib/data/mock-dataset";
@@ -8,7 +6,7 @@ import { scoreVesselIntelligence } from "@/lib/scoring/grain-scoring";
 
 const prisma = new PrismaClient();
 
-const confidenceMap: Record<"High" | "Medium" | "Low", ConfidenceLevel> = {
+const confidenceMap: Record<"High" | "Medium" | "Low", "HIGH" | "MEDIUM" | "LOW"> = {
   High: "HIGH",
   Medium: "MEDIUM",
   Low: "LOW",
@@ -16,7 +14,7 @@ const confidenceMap: Record<"High" | "Medium" | "Low", ConfidenceLevel> = {
 
 const commodityConfidenceMap: Record<
   "weak hypothesis" | "moderate hypothesis" | "strong hypothesis",
-  CommodityHypothesisConfidence
+  "WEAK" | "MODERATE" | "STRONG"
 > = {
   "weak hypothesis": "WEAK",
   "moderate hypothesis": "MODERATE",

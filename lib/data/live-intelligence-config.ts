@@ -1,3 +1,5 @@
+import { getKnowledgeOverrideStore, mergeKnowledgeNodes } from "@/lib/knowledge/overrides";
+
 export type SeededCorridorId =
   | "western_europe_to_morocco_atlantic"
   | "black_sea_to_morocco_via_bosphorus_and_med"
@@ -1623,22 +1625,75 @@ export const VESSEL_CLASS_KNOWLEDGE: VesselClassKnowledgeProfile[] = [
 const VESSEL_CLASS_BY_ID = new Map(
   VESSEL_CLASS_KNOWLEDGE.map((profile) => [profile.id, profile]),
 );
+let runtimeKnowledgeCache:
+  | {
+      loadedAt: number;
+      updatedAt: string | null;
+      exportNodes: ExportCommodityKnowledgeNode[];
+      terminalNodes: TerminalCommodityKnowledgeNode[];
+      destinationNodes: MoroccoDestinationKnowledgeProfile[];
+      exportNodeByPortId: Map<string, ExportCommodityKnowledgeNode>;
+      exportNodeBySeededExportId: Map<string, ExportCommodityKnowledgeNode>;
+      terminalNodeByTerminalName: Map<string, TerminalCommodityKnowledgeNode>;
+      destinationNodeByPortId: Map<string, MoroccoDestinationKnowledgeProfile>;
+    }
+  | null = null;
 
-const EXPORT_NODE_BY_PORT_ID = new Map(
-  EXPORT_PORT_COMMODITY_KNOWLEDGE.map((node) => [node.portId, node]),
-);
+function exportKnowledgeKey(node: ExportCommodityKnowledgeNode) {
+  return node.exportPortId || node.portId || normalizeLooseText(node.portName) || node.id;
+}
 
-const EXPORT_NODE_BY_SEEDED_EXPORT_ID = new Map(
-  EXPORT_PORT_COMMODITY_KNOWLEDGE.map((node) => [node.exportPortId, node]),
-);
+function terminalKnowledgeKey(node: TerminalCommodityKnowledgeNode) {
+  return `${normalizeLooseText(node.portName)}::${normalizeLooseText(node.terminalName)}` || node.id;
+}
 
-const TERMINAL_NODE_BY_TERMINAL_NAME = new Map(
-  TERMINAL_COMMODITY_KNOWLEDGE.map((node) => [normalizeLooseText(node.terminalName), node]),
-);
+function destinationKnowledgeKey(node: MoroccoDestinationKnowledgeProfile) {
+  return node.portId || normalizeLooseText(node.portName) || node.id;
+}
 
-const DESTINATION_NODE_BY_PORT_ID = new Map(
-  MOROCCO_DESTINATION_KNOWLEDGE.map((node) => [node.portId, node]),
-);
+function getRuntimeKnowledgeCollections() {
+  const overrides = getKnowledgeOverrideStore();
+  const now = Date.now();
+  if (
+    runtimeKnowledgeCache &&
+    now - runtimeKnowledgeCache.loadedAt <= 2_000 &&
+    runtimeKnowledgeCache.updatedAt === overrides.updatedAt
+  ) {
+    return runtimeKnowledgeCache;
+  }
+
+  const exportNodes = mergeKnowledgeNodes(
+    EXPORT_PORT_COMMODITY_KNOWLEDGE,
+    overrides.exportOrigins,
+    exportKnowledgeKey,
+  );
+  const terminalNodes = mergeKnowledgeNodes(
+    TERMINAL_COMMODITY_KNOWLEDGE,
+    overrides.terminals,
+    terminalKnowledgeKey,
+  );
+  const destinationNodes = mergeKnowledgeNodes(
+    MOROCCO_DESTINATION_KNOWLEDGE,
+    overrides.moroccoDestinations,
+    destinationKnowledgeKey,
+  );
+
+  runtimeKnowledgeCache = {
+    loadedAt: now,
+    updatedAt: overrides.updatedAt,
+    exportNodes,
+    terminalNodes,
+    destinationNodes,
+    exportNodeByPortId: new Map(exportNodes.map((node) => [node.portId, node])),
+    exportNodeBySeededExportId: new Map(exportNodes.map((node) => [node.exportPortId, node])),
+    terminalNodeByTerminalName: new Map(
+      terminalNodes.map((node) => [normalizeLooseText(node.terminalName), node]),
+    ),
+    destinationNodeByPortId: new Map(destinationNodes.map((node) => [node.portId, node])),
+  };
+
+  return runtimeKnowledgeCache;
+}
 
 const CORRIDOR_COMMODITY_KNOWLEDGE: Partial<Record<SeededCorridorId, CommodityWeightProfile>> = {
   western_europe_to_morocco_atlantic: { wheatScore: 7, barleyScore: 4, cornScore: 2, soybeanMealScore: 2 },
@@ -1697,8 +1752,9 @@ function matchExportKnowledgeNode(options: {
   departurePortCode?: string | null;
   departurePortName?: string | null;
 }) {
+  const runtimeKnowledge = getRuntimeKnowledgeCollections();
   if (options.departurePortId) {
-    const byPortId = EXPORT_NODE_BY_PORT_ID.get(options.departurePortId);
+    const byPortId = runtimeKnowledge.exportNodeByPortId.get(options.departurePortId);
     if (byPortId) {
       return byPortId;
     }
@@ -1712,7 +1768,7 @@ function matchExportKnowledgeNode(options: {
     return null;
   }
 
-  return EXPORT_NODE_BY_SEEDED_EXPORT_ID.get(exportMatch.port.id) ?? null;
+  return runtimeKnowledge.exportNodeBySeededExportId.get(exportMatch.port.id) ?? null;
 }
 
 function matchTerminalKnowledgeNode(options: {
@@ -1721,6 +1777,7 @@ function matchTerminalKnowledgeNode(options: {
   departureTerminalText?: string | null;
   matchedTerminalName?: string | null;
 }) {
+  const runtimeKnowledge = getRuntimeKnowledgeCollections();
   const terminalMatch = matchGrainLoadingTerminal({
     departurePortCode: options.departurePortCode,
     departurePortName: options.departurePortName,
@@ -1729,11 +1786,12 @@ function matchTerminalKnowledgeNode(options: {
 
   let terminalNode =
     terminalMatch.matchedTerminal
-      ? TERMINAL_COMMODITY_KNOWLEDGE.find((node) => node.id === `kb-${terminalMatch.matchedTerminal}`) ?? null
+      ? runtimeKnowledge.terminalNodes.find((node) => node.id === `kb-${terminalMatch.matchedTerminal}`) ?? null
       : null;
 
   if (!terminalNode && options.matchedTerminalName) {
-    terminalNode = TERMINAL_NODE_BY_TERMINAL_NAME.get(normalizeLooseText(options.matchedTerminalName)) ?? null;
+    terminalNode =
+      runtimeKnowledge.terminalNodeByTerminalName.get(normalizeLooseText(options.matchedTerminalName)) ?? null;
   }
 
   return {
@@ -1746,8 +1804,9 @@ function matchDestinationKnowledgeNode(options: {
   destinationPortId?: string | null;
   destinationText?: string | null;
 }) {
+  const runtimeKnowledge = getRuntimeKnowledgeCollections();
   if (options.destinationPortId) {
-    const byPortId = DESTINATION_NODE_BY_PORT_ID.get(options.destinationPortId);
+    const byPortId = runtimeKnowledge.destinationNodeByPortId.get(options.destinationPortId);
     if (byPortId) {
       return byPortId;
     }
@@ -1759,7 +1818,7 @@ function matchDestinationKnowledgeNode(options: {
   }
 
   return (
-    MOROCCO_DESTINATION_KNOWLEDGE.find((node) =>
+    runtimeKnowledge.destinationNodes.find((node) =>
       node.aliases.some((alias) => normalizedDestinationText.includes(normalizeLooseText(alias))),
     ) ?? null
   );

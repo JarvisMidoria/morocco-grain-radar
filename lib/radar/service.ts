@@ -12,6 +12,8 @@ import { persistLiveRadarSnapshot } from "@/lib/radar/live-persistence";
 import { getRadarRuntimeConfig, getRuntimeSourceLabel } from "@/lib/radar/runtime-config";
 import { IntelligenceScoringResult, scoreVesselIntelligence } from "@/lib/scoring/grain-scoring";
 import { getFavoriteVesselIds } from "@/lib/settings/store";
+import { getMoroccoDestinationKnowledgeForPort } from "@/lib/knowledge/catalog";
+import { syncRadarWorkflowState } from "@/lib/workflow/sync";
 import {
   AnalyticsPayload,
   CommodityConfidenceLabel,
@@ -2464,6 +2466,21 @@ async function hydrateVessels(
       vesselVoyageState: scoring.vesselVoyageState,
       voyageStateConfidence: scoring.voyageStateConfidence,
       voyageStateReasons: scoring.voyageStateReasons,
+      operationalSupportScore: debugRecord?.operationalSupportScore ?? 0,
+      portCongestionSignal: debugRecord?.portCongestionSignal ?? 0,
+      berthProximitySignal: debugRecord?.berthProximitySignal ?? 0,
+      waitingPatternSignal: debugRecord?.waitingPatternSignal ?? 0,
+      loadingQueuePlausibility: debugRecord?.loadingQueuePlausibility ?? 0,
+      operationalEvidenceConfidence:
+        debugRecord?.operationalEvidenceConfidence ?? "low",
+      operationalReasons: debugRecord?.operationalReasons ?? [],
+      repeatedObservedNearSeededExportArea:
+        debugRecord?.repeatedObservedNearSeededExportArea ?? false,
+      lowSpeedDurationNearSeededPortHours:
+        debugRecord?.lowSpeedDurationNearSeededPortHours ?? 0,
+      relevantNearbyVesselCount: debugRecord?.relevantNearbyVesselCount ?? 0,
+      operationalSeededExportArea:
+        debugRecord?.operationalSeededExportArea ?? null,
       destinationEvolutionScore: scoring.destinationEvolutionScore,
       destinationMoroccoConfidence: scoring.destinationMoroccoConfidence,
       destinationContradictionScore: scoring.destinationContradictionScore,
@@ -2643,22 +2660,26 @@ async function getRadarFeedWithRuntime(
 
   if (runtime.mode === "mock") {
     const vessels = await buildRadarVessels(getMockAISProvider(), "mock");
+    const source = buildSource({ mode: "mock", provider: "mock" });
+    await syncRadarWorkflowState(vessels, source);
     return {
       vessels: applyFavoritesAndFilters(vessels, filters),
-      source: buildSource({ mode: "mock", provider: "mock" }),
+      source,
     };
   }
 
   if (runtime.validationError) {
     const fallbackVessels = await buildRadarVessels(getMockAISProvider(), "mock");
+    const source = buildSource({
+      mode: "mock",
+      provider: "mock",
+      fallbackToMock: true,
+      warning: runtime.validationError,
+    });
+    await syncRadarWorkflowState(fallbackVessels, source);
     return {
       vessels: applyFavoritesAndFilters(fallbackVessels, filters),
-      source: buildSource({
-        mode: "mock",
-        provider: "mock",
-        fallbackToMock: true,
-        warning: runtime.validationError,
-      }),
+      source,
       warning: runtime.validationError,
     };
   }
@@ -2680,14 +2701,17 @@ async function getRadarFeedWithRuntime(
 
     const cacheAgeSeconds = Math.max(0, Math.round((Date.now() - cachedOrFresh.fetchedAt) / 1000));
 
+    const source = buildSource({
+      mode: "live",
+      provider: liveProvider,
+      warning: cachedOrFresh.warning,
+      cacheAgeSeconds,
+    });
+    await syncRadarWorkflowState(cachedOrFresh.vessels, source);
+
     return {
       vessels: applyFavoritesAndFilters(cachedOrFresh.vessels, filters),
-      source: buildSource({
-        mode: "live",
-        provider: liveProvider,
-        warning: cachedOrFresh.warning,
-        cacheAgeSeconds,
-      }),
+      source,
       warning: cachedOrFresh.warning,
     };
   } catch (error) {
@@ -2697,14 +2721,16 @@ async function getRadarFeedWithRuntime(
         : "Live AIS mode failed with an unknown error. Falling back to mock data.";
     console.warn(`[RadarUsage] ${message}`);
     const fallbackVessels = await buildRadarVessels(getMockAISProvider(), "mock");
+    const source = buildSource({
+      mode: "mock",
+      provider: "mock",
+      fallbackToMock: true,
+      warning: message,
+    });
+    await syncRadarWorkflowState(fallbackVessels, source);
     return {
       vessels: applyFavoritesAndFilters(fallbackVessels, filters),
-      source: buildSource({
-        mode: "mock",
-        provider: "mock",
-        fallbackToMock: true,
-        warning: message,
-      }),
+      source,
       warning: message,
     };
   }
@@ -3653,6 +3679,7 @@ export function getPortOverviews(vessels: RadarVessel[]): PortOverview[] {
   return Array.from(grouped.entries())
     .map(([key, group]): PortOverview => {
       const [portCode, portName] = key.split("|");
+      const destinationKnowledge = getMoroccoDestinationKnowledgeForPort(portName);
 
       const originCounts = new Map<string, number>();
       const commodityCounts = new Map<string, number>();
@@ -3678,16 +3705,31 @@ export function getPortOverviews(vessels: RadarVessel[]): PortOverview[] {
       const nextArrival = [...group].sort((a, b) => new Date(a.eta).getTime() - new Date(b.eta).getTime())[0];
       const avgDays =
         group.reduce((sum, vessel) => sum + vessel.estimatedDaysToMorocco, 0) / Math.max(1, group.length);
+      const avgMoroccoBoundScore =
+        group.reduce((sum, vessel) => sum + vessel.moroccoBoundScore, 0) / Math.max(1, group.length);
+      const avgAgriCargoScore =
+        group.reduce((sum, vessel) => sum + vessel.agriCargoScore, 0) / Math.max(1, group.length);
 
       return {
         portId: portCode,
         portName,
         incomingVessels: group.length,
         earlyDetectedLikely: group.filter((vessel) => vessel.moroccoBoundScore >= 60 && vessel.timeSinceDepartureHours <= 72).length,
+        highConfidenceIncoming: group.filter(
+          (vessel) => vessel.moroccoBoundScore >= 70 && vessel.agriCargoScore >= 65,
+        ).length,
         topOriginPorts,
         topCommodityHypotheses,
         averageEstimatedDaysToArrival: Number(avgDays.toFixed(1)),
+        averageMoroccoBoundScore: Number(avgMoroccoBoundScore.toFixed(1)),
+        averageAgriCargoScore: Number(avgAgriCargoScore.toFixed(1)),
+        arrivalsNext7Days: group.filter((vessel) => vessel.estimatedDaysToMorocco <= 7).length,
+        arrivalsNext14Days: group.filter((vessel) => vessel.estimatedDaysToMorocco <= 14).length,
+        arrivalsNext30Days: group.filter((vessel) => vessel.estimatedDaysToMorocco <= 30).length,
         nextArrivalEta: nextArrival?.eta ?? null,
+        destinationGrainRelevance: destinationKnowledge?.grainRelevance ?? null,
+        destinationFeedRelevance: destinationKnowledge?.feedRelevance ?? null,
+        likelySourceRegions: destinationKnowledge?.likelySourceRegions ?? [],
       };
     })
     .sort((a, b) => b.incomingVessels - a.incomingVessels);

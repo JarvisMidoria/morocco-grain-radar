@@ -249,6 +249,17 @@ export interface RadarVessel extends LayerReasons {
     | "voyage_confirmed";
   voyageStateConfidence: "low" | "medium" | "high";
   voyageStateReasons: string[];
+  operationalSupportScore: number;
+  portCongestionSignal: number;
+  berthProximitySignal: number;
+  waitingPatternSignal: number;
+  loadingQueuePlausibility: number;
+  operationalEvidenceConfidence: "low" | "medium" | "high";
+  operationalReasons: string[];
+  repeatedObservedNearSeededExportArea: boolean;
+  lowSpeedDurationNearSeededPortHours: number;
+  relevantNearbyVesselCount: number;
+  operationalSeededExportArea: string | null;
   destinationEvolutionScore: number;
   destinationMoroccoConfidence: number;
   destinationContradictionScore: number;
@@ -362,10 +373,19 @@ export interface PortOverview {
   portName: string;
   incomingVessels: number;
   earlyDetectedLikely: number;
+  highConfidenceIncoming: number;
   topOriginPorts: string[];
   topCommodityHypotheses: string[];
   averageEstimatedDaysToArrival: number | null;
+  averageMoroccoBoundScore: number | null;
+  averageAgriCargoScore: number | null;
+  arrivalsNext7Days: number;
+  arrivalsNext14Days: number;
+  arrivalsNext30Days: number;
   nextArrivalEta: string | null;
+  destinationGrainRelevance: "high" | "medium" | "low" | null;
+  destinationFeedRelevance: "high" | "medium" | "low" | null;
+  likelySourceRegions: string[];
 }
 
 export interface AnalyticsPayload {

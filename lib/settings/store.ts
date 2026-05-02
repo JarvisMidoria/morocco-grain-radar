@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import "@/lib/env";
+import { getRadarLocalStoreDir } from "@/lib/storage/local-store";
 
 export type ThemePreference = "light" | "dark" | "system";
 export type ProviderStatus = "connected" | "missing_key" | "invalid" | "error";
@@ -65,11 +66,17 @@ interface UpdateSettingsInput {
   providers?: Partial<Record<ProviderId, Partial<ProviderSettings>>>;
 }
 
-const SETTINGS_DIR = path.join(process.cwd(), ".radar");
-const SETTINGS_FILE = path.join(SETTINGS_DIR, "settings.json");
 const CACHE_TTL_MS = 2_000;
 
 let cache: { loadedAt: number; settings: RadarSettingsStore } | null = null;
+
+function getSettingsDir() {
+  return getRadarLocalStoreDir();
+}
+
+function getSettingsFile() {
+  return path.join(getSettingsDir(), "settings.json");
+}
 
 function normalizeCoreRadarMode(value?: string | null): CoreRadarMode {
   const normalized = value?.toLowerCase();
@@ -99,15 +106,7 @@ function hasValue(value: string | null | undefined) {
 }
 
 function getDefaultCoreMode(): CoreRadarMode {
-  const envMode = (process.env.RADAR_DATA_MODE ?? "mock").toLowerCase();
-  const envProvider = (process.env.AIS_PROVIDER ?? "mock").toLowerCase();
-  if (envMode !== "live") {
-    return "mock";
-  }
-  if (envProvider === "hybrid") {
-    return "hybrid";
-  }
-  return "live";
+  return "mock";
 }
 
 function defaultProviderSettings(): Record<ProviderId, ProviderSettings> {
@@ -153,7 +152,7 @@ function defaultProviderSettings(): Record<ProviderId, ProviderSettings> {
 function getDefaultSettingsStore(): RadarSettingsStore {
   return {
     appearance: {
-      theme: "system",
+      theme: "light",
     },
     core: {
       radarDataMode: getDefaultCoreMode(),
@@ -172,7 +171,7 @@ function normalizeTheme(value: unknown): ThemePreference {
   if (value === "light" || value === "dark" || value === "system") {
     return value;
   }
-  return "system";
+  return "light";
 }
 
 function normalizeProviderSettings(
@@ -276,8 +275,9 @@ function normalizeSettings(raw: unknown): RadarSettingsStore {
 }
 
 function ensureSettingsDir() {
-  if (!fs.existsSync(SETTINGS_DIR)) {
-    fs.mkdirSync(SETTINGS_DIR, { recursive: true });
+  const settingsDir = getSettingsDir();
+  if (!fs.existsSync(settingsDir)) {
+    fs.mkdirSync(settingsDir, { recursive: true });
   }
 }
 
@@ -289,15 +289,16 @@ function readFileSettings(): RadarSettingsStore {
 
   const defaults = getDefaultSettingsStore();
   ensureSettingsDir();
+  const settingsFile = getSettingsFile();
 
-  if (!fs.existsSync(SETTINGS_FILE)) {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaults, null, 2), "utf-8");
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(settingsFile, JSON.stringify(defaults, null, 2), "utf-8");
     cache = { loadedAt: now, settings: defaults };
     return defaults;
   }
 
   try {
-    const raw = fs.readFileSync(SETTINGS_FILE, "utf-8");
+    const raw = fs.readFileSync(settingsFile, "utf-8");
     const parsed = raw ? JSON.parse(raw) : {};
     const normalized = normalizeSettings(parsed);
     cache = { loadedAt: now, settings: normalized };
@@ -310,7 +311,7 @@ function readFileSettings(): RadarSettingsStore {
 
 function writeFileSettings(settings: RadarSettingsStore) {
   ensureSettingsDir();
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+  fs.writeFileSync(getSettingsFile(), JSON.stringify(settings, null, 2), "utf-8");
   cache = { loadedAt: Date.now(), settings };
 }
 

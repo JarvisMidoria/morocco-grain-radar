@@ -13,9 +13,9 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: RADAR_DATA_MODE
-        value: live
+        value: mock
       - key: AIS_PROVIDER
-        value: hybrid
+        value: mock
       - key: AISSTREAM_API_KEY
         sync: false
       - key: DATALASTIC_API_KEY

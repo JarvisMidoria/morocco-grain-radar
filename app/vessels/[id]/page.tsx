@@ -3,10 +3,16 @@ import { CommodityConfidenceBadge } from "@/components/dashboard/commodity-confi
 import { DetectionPhaseBadge } from "@/components/dashboard/detection-phase-badge";
 import { FavoriteToggle } from "@/components/dashboard/favorite-toggle";
 import { VesselMiniMap } from "@/components/map/vessel-mini-map";
+import { VesselExecutionPanel } from "@/components/operations/vessel-execution-panel";
+import { ActionabilityBadge } from "@/components/opportunities/actionability-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAISProvider } from "@/lib/ais/factory";
 import { formatEta, formatRelativeTime } from "@/lib/formatters";
-import { getRadarVesselById } from "@/lib/radar/service";
+import { buildVesselExecutionAssessment } from "@/lib/operations/morocco-execution";
+import { getRadarFeed } from "@/lib/radar/service";
+import { buildVesselRiskSnapshot } from "@/lib/risk/assessment";
+import { buildTraderActionabilitySnapshot } from "@/lib/trader/actionability";
+import { getVesselChangeHistory } from "@/lib/workflow/sync";
 
 interface VesselDetailPageProps {
   params: {
@@ -17,7 +23,8 @@ interface VesselDetailPageProps {
 export const dynamic = "force-dynamic";
 
 export default async function VesselDetailPage({ params }: VesselDetailPageProps) {
-  const vessel = await getRadarVesselById(params.id);
+  const feed = await getRadarFeed();
+  const vessel = feed.vessels.find((entry) => entry.id === params.id) ?? null;
   if (!vessel) {
     notFound();
   }
@@ -27,6 +34,13 @@ export default async function VesselDetailPage({ params }: VesselDetailPageProps
     provider.getPorts(),
     provider.getHistoricalRoutePattern(vessel.id),
   ]);
+  const workflowHistory = await getVesselChangeHistory(vessel.id);
+  const riskSnapshot = buildVesselRiskSnapshot(vessel);
+  const executionAssessment = buildVesselExecutionAssessment(vessel, feed);
+  const traderSnapshot = buildTraderActionabilitySnapshot(vessel, {
+    riskSnapshot,
+    executionPriorityScore: executionAssessment?.executionPriorityScore ?? null,
+  });
 
   const portById = new Map(ports.map((port) => [port.id, port]));
   const historicalPorts = historicalRoute
@@ -44,7 +58,12 @@ export default async function VesselDetailPage({ params }: VesselDetailPageProps
           <p className="text-sm text-slate-500">IMO {vessel.imo} · MMSI {vessel.mmsi} · {vessel.vesselType}</p>
         </div>
         <div className="flex items-center gap-3">
-          <DetectionPhaseBadge phase={vessel.detectionPhase} />
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              <ActionabilityBadge band={traderSnapshot.band} score={traderSnapshot.score} />
+              <DetectionPhaseBadge phase={vessel.detectionPhase} />
+            </div>
+          </div>
           <div className="text-right">
             <div className="text-xs uppercase tracking-[0.08em] text-slate-500">Morocco-Bound</div>
             <div className="text-3xl font-semibold text-slate-900">{vessel.moroccoBoundScore}</div>
@@ -124,6 +143,55 @@ export default async function VesselDetailPage({ params }: VesselDetailPageProps
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Trade Desk Snapshot</CardTitle>
+          <CardDescription>
+            Commercial priority layer combining conviction, timing, execution, and risk.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-[220px_1fr_1fr]">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <ActionabilityBadge band={traderSnapshot.band} score={traderSnapshot.score} />
+            <div className="mt-3 text-4xl font-semibold text-slate-900">{traderSnapshot.score}</div>
+            <div className="mt-1 text-sm text-slate-500">Actionability score</div>
+            <div className="mt-3 text-xs text-slate-500">
+              Execution {executionAssessment?.executionPriorityScore ?? "N/A"} · Risk {riskSnapshot.score}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">Next action</div>
+              <p className="mt-1 text-sm text-slate-700">{traderSnapshot.nextAction}</p>
+            </div>
+            <div>
+              <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">Conviction</div>
+              <ul className="mt-2 space-y-2 text-sm text-slate-700">
+                {traderSnapshot.convictionReasons.map((reason) => (
+                  <li key={reason} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    {reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">Blockers</div>
+            <ul className="mt-2 space-y-2 text-sm text-slate-700">
+              {traderSnapshot.blockers.map((reason) => (
+                <li key={reason} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      <VesselExecutionPanel assessment={executionAssessment} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -216,6 +284,35 @@ export default async function VesselDetailPage({ params }: VesselDetailPageProps
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Workflow History</CardTitle>
+          <CardDescription>Latest phase, score, ETA, and destination changes captured for this vessel.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {workflowHistory.length > 0 ? (
+            <div className="space-y-3">
+              {workflowHistory.map((event) => (
+                <div key={event.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium text-slate-900">{event.title}</div>
+                    <div className="text-xs uppercase tracking-[0.08em] text-slate-500">
+                      {event.type.replaceAll("_", " ")}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-700">{event.summary}</div>
+                  <div className="mt-2 text-xs text-slate-500">{formatRelativeTime(event.createdAt)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+              No workflow changes recorded yet for this vessel.
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

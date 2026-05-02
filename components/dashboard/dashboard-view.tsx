@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ArrowUpRight } from "lucide-react";
 import { CommodityConfidenceBadge } from "@/components/dashboard/commodity-confidence-badge";
-import { DetectionPhaseBadge } from "@/components/dashboard/detection-phase-badge";
 import { EarlyCandidatesTable } from "@/components/dashboard/early-candidates-table";
+import { FavoriteToggle } from "@/components/dashboard/favorite-toggle";
 import { KpiCards } from "@/components/dashboard/kpi-cards";
 import { ScoreBadge } from "@/components/dashboard/score-badge";
 import { VesselTable } from "@/components/dashboard/vessel-table";
@@ -13,6 +14,7 @@ import { LiveRadarMap } from "@/components/map/live-radar-map";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   CommodityConfidenceLabel,
   DashboardMetrics,
@@ -79,6 +81,43 @@ function confidencePriorityWeight(label: CommodityConfidenceLabel) {
   }
 }
 
+function decisionConfidence(vessel: RadarVessel) {
+  if (
+    vessel.moroccoBoundScore >= 80 &&
+    vessel.agriCargoScore >= 75 &&
+    vessel.commodityConfidenceLabel !== "weak hypothesis"
+  ) {
+    return "High";
+  }
+
+  if (vessel.moroccoBoundScore >= 65 && vessel.agriCargoScore >= 60) {
+    return "Medium";
+  }
+
+  return "Low";
+}
+
+function decisionAction(vessel: RadarVessel) {
+  const confidence = decisionConfidence(vessel);
+  if (confidence === "High" && vessel.estimatedDaysToMorocco <= 7) {
+    return "Watch closely";
+  }
+  if (confidence === "High" || confidence === "Medium") {
+    return "Monitor";
+  }
+  return "Validate";
+}
+
+function confidenceTone(confidence: string) {
+  if (confidence === "High") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (confidence === "Medium") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
 export function DashboardView({
   vessels,
   metrics,
@@ -100,6 +139,7 @@ export function DashboardView({
   const [highAgriOnly, setHighAgriOnly] = useState(false);
   const [mapMode, setMapMode] = useState<MapMode>("all_tracked_vessels");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showAnalystDetail, setShowAnalystDetail] = useState(false);
   const [tableView, setTableView] = useState<TableView>("priority");
 
   const options = useMemo(
@@ -237,6 +277,13 @@ export function DashboardView({
 
   const hasAdmittedVessels = vessels.length > 0;
   const hasWatchlistFallback = watchlistFallbackCandidates.length > 0;
+  const arrivalsNext7Days = filtered.filter((vessel) => vessel.estimatedDaysToMorocco <= 7).length;
+  const highConfidenceCount = filtered.filter(
+    (vessel) =>
+      vessel.moroccoBoundScore >= 70 &&
+      vessel.agriCargoScore >= 65 &&
+      vessel.commodityConfidenceLabel !== "weak hypothesis",
+  ).length;
 
   function resetFilters() {
     setDetectionPhase("All");
@@ -259,20 +306,26 @@ export function DashboardView({
         <CardHeader className="pb-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <CardTitle>Radar Command Center</CardTitle>
+              <CardTitle>Radar Desk</CardTitle>
               <p className="mt-1 text-sm text-slate-600">
-                Prioritized vessels first. Map and detailed tables stay contextual to reduce noise.
+                Today: {priorityCandidates.length} vessels worth reviewing, {highConfidenceCount} high confidence, {arrivalsNext7Days} arrivals within 7 days.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Link
+                href="/opportunities"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                Opportunities
+              </Link>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
-                {filtered.length} tracked after filters
+                {filtered.length} tracked
               </span>
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-blue-700">
-                {priorityCandidates.length} in priority queue
+                {priorityCandidates.length} to review
               </span>
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
-                {earlyCandidates.length} early candidates
+                {arrivalsNext7Days} within 7d
               </span>
             </div>
           </div>
@@ -465,66 +518,90 @@ export function DashboardView({
         </CardContent>
       </Card>
 
-      <section className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
+      <div className="flex justify-start">
+        <button
+          type="button"
+          onClick={() => setShowAnalystDetail((current) => !current)}
+          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+        >
+          {showAnalystDetail ? "Hide analyst detail" : "Show analyst detail"}
+        </button>
+      </div>
+
+      <section className="grid items-start gap-6 xl:grid-cols-[1.1fr_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>{hasAdmittedVessels ? "Priority Queue" : "Watchlist Priority Queue"}</CardTitle>
+            <CardTitle>{hasAdmittedVessels ? "Cargos To Watch" : "Watchlist Candidates"}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {hasAdmittedVessels && priorityCandidates.length > 0 && (
-              <ul className="space-y-3">
-                {priorityCandidates.map(({ vessel, priorityScore }) => (
-                  <li key={vessel.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">{vessel.name}</p>
-                        <p className="text-xs text-slate-500">
-                          IMO {vessel.imo || "N/A"} · {vessel.vesselType}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        <DetectionPhaseBadge phase={vessel.detectionPhase} />
-                        <CommodityConfidenceBadge label={vessel.commodityConfidenceLabel} />
-                        <Badge className="border-slate-200 bg-slate-100 text-slate-700">
-                          Priority {priorityScore}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
-                      <p>
-                        <span className="font-medium text-slate-900">Departure:</span> {vessel.departurePort}, {vessel.departureCountry}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Corridor:</span> {vessel.currentMaritimeZone}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Hypothesis:</span>{" "}
-                        {formatVoyageHypothesis(vessel.topVoyageHypothesis)}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Commodity:</span>{" "}
-                        {formatCommodity(vessel.mostLikelyCommodity)}
-                      </p>
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <ScoreBadge score={vessel.moroccoBoundScore} label="Morocco" />
-                      <ScoreBadge score={vessel.agriCargoScore} label="Agri" />
-                      <Badge className="border-slate-200 bg-slate-50 text-slate-700">
-                        {vessel.timeSinceDepartureHours.toFixed(1)} h since departure
-                      </Badge>
-                    </div>
-
-                    <Link
-                      href={`/vessels/${vessel.id}`}
-                      className="mt-2 inline-flex text-xs font-semibold text-blue-600 hover:text-blue-700"
-                    >
-                      Open vessel sheet
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[56px]">Fav</TableHead>
+                    <TableHead>Action</TableHead>
+                    <TableHead>Vessel / flow</TableHead>
+                    <TableHead>Cargo?</TableHead>
+                    <TableHead>ETA</TableHead>
+                    <TableHead>Confidence</TableHead>
+                    <TableHead className="text-right">Open</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {priorityCandidates.map(({ vessel, priorityScore }) => {
+                    const confidence = decisionConfidence(vessel);
+                    return (
+                      <TableRow key={vessel.id}>
+                        <TableCell className="align-top">
+                          <FavoriteToggle vesselId={vessel.id} initialFavorite={vessel.isFavorite} />
+                        </TableCell>
+                        <TableCell className="min-w-[130px] align-top">
+                          <div className="font-semibold text-slate-900">{decisionAction(vessel)}</div>
+                          <div className="mt-1 text-xs text-slate-500">Priority {priorityScore}</div>
+                        </TableCell>
+                        <TableCell className="min-w-[220px] align-top">
+                          <Link href={`/vessels/${vessel.id}`} className="font-semibold text-blue-700 hover:text-blue-800">
+                            {vessel.name}
+                          </Link>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {vessel.departurePort}, {vessel.departureCountry} {"->"}{" "}
+                            {vessel.destinationPort || vessel.suspectedDestinationRegion}?
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <div className="font-medium text-slate-900">{formatCommodity(vessel.mostLikelyCommodity)}?</div>
+                          <div className="mt-1 text-xs text-slate-500">{vessel.commodityConfidenceLabel}</div>
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <div className="font-medium text-slate-900">
+                            {new Date(vessel.eta).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">{vessel.estimatedDaysToMorocco.toFixed(1)}d</div>
+                        </TableCell>
+                        <TableCell className="min-w-[210px] align-top">
+                          <Badge className={confidenceTone(confidence)}>{confidence}</Badge>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <ScoreBadge score={vessel.moroccoBoundScore} label="M" />
+                            <ScoreBadge score={vessel.agriCargoScore} label="A" />
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            M = Morocco-bound · A = Agri-cargo
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right align-top">
+                          <Link
+                            href={`/vessels/${vessel.id}`}
+                            aria-label={`Open ${vessel.name} vessel sheet`}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
+                          >
+                            <ArrowUpRight className="h-4 w-4" />
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             )}
 
             {!hasAdmittedVessels && hasWatchlistFallback && (
@@ -632,74 +709,83 @@ export function DashboardView({
         </Card>
       </section>
 
-      <KpiCards metrics={metrics} />
+      {showAnalystDetail ? (
+        <section className="space-y-6">
+          <KpiCards metrics={metrics} />
 
-      <Card>
-        <CardHeader className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>Intelligence Tables</CardTitle>
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  { key: "priority", label: `Priority (${earlyCandidates.length})` },
-                  { key: "tracked", label: `Tracked (${filtered.length})` },
-                  { key: "watchlist", label: `Watchlist (${watchlistFallbackCandidates.length})` },
-                ] satisfies Array<{ key: TableView; label: string }>
-              ).map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setTableView(item.key)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                    tableView === item.key
-                      ? "border-blue-200 bg-blue-50 text-blue-700"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {tableView === "priority" && (
-            <>
-              {earlyCandidates.length > 0 ? (
-                <EarlyCandidatesTable vessels={earlyCandidates} />
-              ) : (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-                  No early candidates for the current filter set.
+          <Card>
+            <CardHeader className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Intelligence Tables</CardTitle>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Expanded tables for analyst review and candidate QA.
+                  </p>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { key: "priority", label: `Priority (${earlyCandidates.length})` },
+                      { key: "tracked", label: `Tracked (${filtered.length})` },
+                      { key: "watchlist", label: `Watchlist (${watchlistFallbackCandidates.length})` },
+                    ] satisfies Array<{ key: TableView; label: string }>
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      onClick={() => setTableView(item.key)}
+                      className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+                        tableView === item.key
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tableView === "priority" && (
+                <>
+                  {earlyCandidates.length > 0 ? (
+                    <EarlyCandidatesTable vessels={earlyCandidates} />
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                      No early candidates for the current filter set.
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
 
-          {tableView === "tracked" && (
-            <>
-              {filtered.length > 0 ? (
-                <VesselTable vessels={filtered} />
-              ) : (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-                  No tracked vessels match current filters.
-                </div>
+              {tableView === "tracked" && (
+                <>
+                  {filtered.length > 0 ? (
+                    <VesselTable vessels={filtered} />
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                      No tracked vessels match current filters.
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
 
-          {tableView === "watchlist" && (
-            <>
-              {watchlistFallbackCandidates.length > 0 ? (
-                <WatchlistFallbackTable candidates={watchlistFallbackCandidates} />
-              ) : (
-                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
-                  No visible watchlist candidates right now.
-                </div>
+              {tableView === "watchlist" && (
+                <>
+                  {watchlistFallbackCandidates.length > 0 ? (
+                    <WatchlistFallbackTable candidates={watchlistFallbackCandidates} />
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                      No visible watchlist candidates right now.
+                    </div>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
     </div>
   );
 }

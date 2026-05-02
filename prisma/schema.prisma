@@ -132,6 +132,13 @@ model GrainAssessment {
   @@index([detectionPhase])
 }
 
+model RadarAppState {
+  key       String   @id
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 enum PortCallEventType {
   ARRIVAL
   DEPARTURE

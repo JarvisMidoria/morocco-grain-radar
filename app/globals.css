@@ -31,6 +31,7 @@ body {
 
 .leaflet-container {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  z-index: 0;
 }
 
 .dark {
