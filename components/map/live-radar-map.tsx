@@ -24,7 +24,7 @@ export interface LiveRadarMapProps {
 const LiveRadarMapClient = dynamic(() => import("@/components/map/live-radar-map-client"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[560px] min-h-[420px] w-full items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-sm text-slate-500">
+    <div className="flex h-[420px] min-h-[320px] w-full max-w-full items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-sm text-slate-500 sm:h-[500px] lg:h-[560px] lg:min-h-[420px]">
       Loading map...
     </div>
   ),

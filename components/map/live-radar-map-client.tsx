@@ -59,6 +59,9 @@ export default function LiveRadarMapClient({
 }: LiveRadarMapProps) {
   const [vessels, setVessels] = useState<RadarVessel[]>(initialVessels);
   const refreshIntervalMs = Math.max(15, refreshIntervalSeconds) * 1000;
+  const isMobileMap = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+  const mapCenter: [number, number] = isMobileMap ? [25, -30] : [33.6, -7.5];
+  const mapZoom = isMobileMap ? 2 : 4;
 
   const query = useMemo(() => buildQuery(filters), [filters]);
 
@@ -90,8 +93,8 @@ export default function LiveRadarMapClient({
   }, [query, refreshIntervalMs]);
 
   return (
-    <div className="relative z-0 h-[560px] min-h-[420px] w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-      <MapContainer center={[33.6, -7.5]} zoom={4} scrollWheelZoom className="z-0 h-full w-full">
+    <div className="relative z-0 h-[420px] min-h-[320px] w-full max-w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 sm:h-[500px] lg:h-[560px] lg:min-h-[420px]">
+      <MapContainer center={mapCenter} zoom={mapZoom} scrollWheelZoom className="z-0 h-full w-full">
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

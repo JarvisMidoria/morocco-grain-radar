@@ -528,80 +528,85 @@ export function DashboardView({
         </button>
       </div>
 
-      <section className="grid items-start gap-6 xl:grid-cols-[1.1fr_1fr]">
-        <Card>
+      <section className="grid min-w-0 items-start gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>{hasAdmittedVessels ? "Cargos To Watch" : "Watchlist Candidates"}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="min-w-0 space-y-3">
             {hasAdmittedVessels && priorityCandidates.length > 0 && (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[56px]">Fav</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Vessel / flow</TableHead>
-                    <TableHead>Cargo?</TableHead>
-                    <TableHead>ETA</TableHead>
-                    <TableHead>Confidence</TableHead>
-                    <TableHead className="text-right">Open</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {priorityCandidates.map(({ vessel, priorityScore }) => {
-                    const confidence = decisionConfidence(vessel);
-                    return (
-                      <TableRow key={vessel.id}>
-                        <TableCell className="align-top">
-                          <FavoriteToggle vesselId={vessel.id} initialFavorite={vessel.isFavorite} />
-                        </TableCell>
-                        <TableCell className="min-w-[130px] align-top">
-                          <div className="font-semibold text-slate-900">{decisionAction(vessel)}</div>
-                          <div className="mt-1 text-xs text-slate-500">Priority {priorityScore}</div>
-                        </TableCell>
-                        <TableCell className="min-w-[220px] align-top">
-                          <Link href={`/vessels/${vessel.id}`} className="font-semibold text-blue-700 hover:text-blue-800">
-                            {vessel.name}
-                          </Link>
-                          <div className="mt-1 text-xs text-slate-500">
-                            {vessel.departurePort}, {vessel.departureCountry} {"->"}{" "}
-                            {vessel.destinationPort || vessel.suspectedDestinationRegion}?
-                          </div>
-                        </TableCell>
-                        <TableCell className="align-top">
-                          <div className="font-medium text-slate-900">{formatCommodity(vessel.mostLikelyCommodity)}?</div>
-                          <div className="mt-1 text-xs text-slate-500">{vessel.commodityConfidenceLabel}</div>
-                        </TableCell>
-                        <TableCell className="align-top">
-                          <div className="font-medium text-slate-900">
-                            {new Date(vessel.eta).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500">{vessel.estimatedDaysToMorocco.toFixed(1)}d</div>
-                        </TableCell>
-                        <TableCell className="min-w-[210px] align-top">
-                          <Badge className={confidenceTone(confidence)}>{confidence}</Badge>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            <ScoreBadge score={vessel.moroccoBoundScore} label="M" />
-                            <ScoreBadge score={vessel.agriCargoScore} label="A" />
-                          </div>
-                          <div className="mt-1 text-xs text-slate-500">
-                            M = Morocco-bound · A = Agri-cargo
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right align-top">
-                          <Link
-                            href={`/vessels/${vessel.id}`}
-                            aria-label={`Open ${vessel.name} vessel sheet`}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
-                          >
-                            <ArrowUpRight className="h-4 w-4" />
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <>
+                <p className="text-xs text-slate-500 md:hidden">
+                  Swipe sideways to see cargo, ETA, confidence, and open.
+                </p>
+                <Table className="min-w-[920px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[56px]">Fav</TableHead>
+                      <TableHead>Action</TableHead>
+                      <TableHead>Vessel / flow</TableHead>
+                      <TableHead>Cargo?</TableHead>
+                      <TableHead>ETA</TableHead>
+                      <TableHead>Confidence</TableHead>
+                      <TableHead className="text-right">Open</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {priorityCandidates.map(({ vessel, priorityScore }) => {
+                      const confidence = decisionConfidence(vessel);
+                      return (
+                        <TableRow key={vessel.id}>
+                          <TableCell className="align-top">
+                            <FavoriteToggle vesselId={vessel.id} initialFavorite={vessel.isFavorite} />
+                          </TableCell>
+                          <TableCell className="min-w-[130px] align-top">
+                            <div className="font-semibold text-slate-900">{decisionAction(vessel)}</div>
+                            <div className="mt-1 text-xs text-slate-500">Priority {priorityScore}</div>
+                          </TableCell>
+                          <TableCell className="min-w-[220px] align-top">
+                            <Link href={`/vessels/${vessel.id}`} className="font-semibold text-blue-700 hover:text-blue-800">
+                              {vessel.name}
+                            </Link>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {vessel.departurePort}, {vessel.departureCountry} {"->"}{" "}
+                              {vessel.destinationPort || vessel.suspectedDestinationRegion}?
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <div className="font-medium text-slate-900">{formatCommodity(vessel.mostLikelyCommodity)}?</div>
+                            <div className="mt-1 text-xs text-slate-500">{vessel.commodityConfidenceLabel}</div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            <div className="font-medium text-slate-900">
+                              {new Date(vessel.eta).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">{vessel.estimatedDaysToMorocco.toFixed(1)}d</div>
+                          </TableCell>
+                          <TableCell className="min-w-[210px] align-top">
+                            <Badge className={confidenceTone(confidence)}>{confidence}</Badge>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <ScoreBadge score={vessel.moroccoBoundScore} label="M" />
+                              <ScoreBadge score={vessel.agriCargoScore} label="A" />
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              M = Morocco-bound · A = Agri-cargo
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right align-top">
+                            <Link
+                              href={`/vessels/${vessel.id}`}
+                              aria-label={`Open ${vessel.name} vessel sheet`}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-blue-50 hover:text-blue-700"
+                            >
+                              <ArrowUpRight className="h-4 w-4" />
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </>
             )}
 
             {!hasAdmittedVessels && hasWatchlistFallback && (
@@ -681,11 +686,11 @@ export function DashboardView({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle>Map Context</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="min-w-0 overflow-hidden px-3 pb-3 pt-0 sm:px-5 sm:pb-5">
             <LiveRadarMap
               initialVessels={filtered}
               moroccoPorts={moroccoPorts}
